@@ -66,7 +66,8 @@ function getFAQView(faqs) {
   }
   const options = faqs.map((faq, i) => ({
     label: faq.question.length > 100 ? faq.question.substring(0, 100) : faq.question,
-    description: faq.answer.length > 50 ? faq.answer.substring(0, 50) : faq.answer,
+    // تم حذف الجواب من الوصف - الآن لا يظهر أي نص تحت السؤال في القائمة
+    description: ' ',
     value: String(i)
   }));
   const menu = new StringSelectMenuBuilder()
@@ -363,6 +364,7 @@ client.on('interactionCreate', async interaction => {
         return;
       }
       const faq = cfg.faqs[idx];
+      // Embed يظهر الجواب فقط (مع السؤال كعنوان للإيضاح، أو يمكن جعل العنوان "الجواب")
       const embed = new EmbedBuilder()
         .setColor(EMBED_COLOR)
         .setTitle(faq.question)
