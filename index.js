@@ -8,8 +8,13 @@ const {
     ButtonStyle, 
     ModalBuilder, 
     TextInputBuilder, 
-    TextInputStyle 
+    TextInputStyle,
+    REST,
+    Routes,
+    PermissionFlagsBits
 } = require('discord.js');
+const fs = require('fs');
+const path = require('path');
 
 const client = new Client({
     intents: [
@@ -20,12 +25,51 @@ const client = new Client({
     ]
 });
 
-// قراءة المتغيرات البيئية من Railway
-const FEEDBACK_CHANNEL_ID = process.env.FEEDBACK_CHANNEL_ID;
 const BOT_TOKEN = process.env.BOT_TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID; // آيدي البوت لتسجيل أوامر السلاش
 
-client.once('ready', () => {
+// ملف لحفظ إعدادات الرومات لكل سيرفر
+const configPath = path.join(__dirname, 'config.json');
+
+function loadConfig() {
+    if (fs.existsSync(configPath)) {
+        return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    }
+    return {};
+}
+
+function saveConfig(data) {
+    fs.writeFileSync(configPath, JSON.stringify(data, null, 2));
+}
+
+client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
+
+    // تسجيل أمر السلاش تلقائياً عند تشغيل البوت
+    const commands = [
+        {
+            name: 'تعيين-روم-التقييم',
+            description: 'تحديد الروم المخصصة لإرسال تقييمات العملاء',
+            default_member_permissions: PermissionFlagsBits.Administrator.toString(),
+            options: [
+                {
+                    name: 'الروم',
+                    description: 'اختر الروم التي ستستقبل التقييمات',
+                    type: 7, // Channel Type
+                    required: true,
+                    channel_types: [0] // Text Channel only
+                }
+            ]
+        }
+    ];
+
+    const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
+    try {
+        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+        console.log('Successfully registered slash commands.');
+    } catch (error) {
+        console.error(error);
+    }
 });
 
 client.on('messageCreate', async message => {
@@ -54,8 +98,7 @@ client.on('messageCreate', async message => {
 
     // 2. نظام فحص النيترو والبوستات (Control)
     if (message.content === '!كنترول' || message.content === '!control') {
-        const embed = new EmbedBuilder()
-            .setColor(0x5865F2);
+        const embed = new EmbedBuilder().setColor(0x5865F2);
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
@@ -73,7 +116,7 @@ client.on('messageCreate', async message => {
         return message.reply({ embeds: [embed], components: [row] });
     }
 
-    // 3. نظام تقييم العملاء (Feedback Trigger)
+    // 3. أمر فتح نموذج التقييم
     if (message.content === '!تقييم') {
         const modal = new ModalBuilder()
             .setCustomId('feedback_modal')
@@ -106,12 +149,24 @@ client.on('messageCreate', async message => {
             new ActionRowBuilder().addComponents(messageInput)
         );
 
-        // ملاحظة: الأفضل استخدام Slash Commands للأوامر التي تفتح Modals، لكن كمبدأ يعمل حسب طلبك.
+        // ملاحظة: تفعيل الـ Modal مباشرة يتطلب التفاعل عبر زر أو Slash Command، لكن تم وضعه هنا للتوضيح.
     }
 });
 
-// التعامل مع التفاعلات (أزرار، قوائم، نماذج)
 client.on('interactionCreate', async interaction => {
+    // التعامل مع أوامر السلاش (Slash Commands)
+    if (interaction.isChatInputCommand()) {
+        if (interaction.commandName === 'تعيين-روم-التقييم') {
+            const channel = interaction.options.getChannel('الروم');
+            const config = loadConfig();
+
+            config[interaction.guildId] = channel.id;
+            saveConfig(config);
+
+            return interaction.reply({ content: `✅ تم بنجاح تعيين روم التقييمات لتصبح: ${channel}`, ephemeral: true });
+        }
+    }
+
     if (interaction.isStringSelectMenu() && interaction.customId === 'faq_select') {
         let answer = '';
         if (interaction.values[0] === 'q1') answer = 'نوفر وسائل دفع متعددة تشمل بطاقات مدى، فودافون كاش، وباي بال.';
@@ -152,14 +207,19 @@ client.on('interactionCreate', async interaction => {
             .setTimestamp()
             .setFooter({ text: 'Candy Store | Feedback' });
 
-        const channel = interaction.guild.channels.cache.get(FEEDBACK_CHANNEL_ID);
-        if (channel) {
-            await channel.send({ embeds: [feedbackEmbed] });
+        // جلب الروم المحفوظة لهذا السيرفر
+        const config = loadConfig();
+        const feedbackChannelId = config[interaction.guildId];
+
+        if (feedbackChannelId) {
+            const channel = interaction.guild.channels.cache.get(feedbackChannelId);
+            if (channel) {
+                await channel.send({ embeds: [feedbackEmbed] });
+            }
         }
 
         return interaction.reply({ content: 'شكراً لك! تم إرسال تقييمك بنجاح.', ephemeral: true });
     }
 });
 
-// تشغيل البوت عبر المتغير البيئي في ريل واي
 client.login(BOT_TOKEN);
