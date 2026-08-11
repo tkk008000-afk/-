@@ -16,6 +16,7 @@ const {
 const fs = require('fs');
 const path = require('path');
 
+// تعريف الـ Intents بشكل صريح ومباشر لتجنب أي خطأ
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -26,9 +27,8 @@ const client = new Client({
 });
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const CLIENT_ID = process.env.CLIENT_ID; // آيدي البوت لتسجيل أوامر السلاش
+const CLIENT_ID = process.env.CLIENT_ID;
 
-// ملف لحفظ إعدادات الرومات لكل سيرفر
 const configPath = path.join(__dirname, 'config.json');
 
 function loadConfig() {
@@ -45,7 +45,6 @@ function saveConfig(data) {
 client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
 
-    // تسجيل أمر السلاش تلقائياً عند تشغيل البوت
     const commands = [
         {
             name: 'تعيين-روم-التقييم',
@@ -55,27 +54,28 @@ client.once('ready', async () => {
                 {
                     name: 'الروم',
                     description: 'اختر الروم التي ستستقبل التقييمات',
-                    type: 7, // Channel Type
+                    type: 7,
                     required: true,
-                    channel_types: [0] // Text Channel only
+                    channel_types: [0]
                 }
             ]
         }
     ];
 
-    const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
-    try {
-        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-        console.log('Successfully registered slash commands.');
-    } catch (error) {
-        console.error(error);
+    if (BOT_TOKEN && CLIENT_ID) {
+        const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
+        try {
+            await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+            console.log('Successfully registered slash commands.');
+        } catch (error) {
+            console.error(error);
+        }
     }
 });
 
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
-    // 1. نظام الأسئلة الشائعة (FAQ)
     if (message.content === '!أسئلة') {
         const embed = new EmbedBuilder()
             .setTitle('الأسئلة الشائعة - FAQ')
@@ -96,7 +96,6 @@ client.on('messageCreate', async message => {
         return message.reply({ embeds: [embed], components: [row] });
     }
 
-    // 2. نظام فحص النيترو والبوستات (Control)
     if (message.content === '!كنترول' || message.content === '!control') {
         const embed = new EmbedBuilder().setColor(0x5865F2);
 
@@ -116,7 +115,6 @@ client.on('messageCreate', async message => {
         return message.reply({ embeds: [embed], components: [row] });
     }
 
-    // 3. أمر فتح نموذج التقييم
     if (message.content === '!تقييم') {
         const modal = new ModalBuilder()
             .setCustomId('feedback_modal')
@@ -149,12 +147,11 @@ client.on('messageCreate', async message => {
             new ActionRowBuilder().addComponents(messageInput)
         );
 
-        // ملاحظة: تفعيل الـ Modal مباشرة يتطلب التفاعل عبر زر أو Slash Command، لكن تم وضعه هنا للتوضيح.
+        // ملاحظة: الـ Modals تفضل أن تكون عبر Slash Command أو الأزرار التفاعلية لتفادي القيود.
     }
 });
 
 client.on('interactionCreate', async interaction => {
-    // التعامل مع أوامر السلاش (Slash Commands)
     if (interaction.isChatInputCommand()) {
         if (interaction.commandName === 'تعيين-روم-التقييم') {
             const channel = interaction.options.getChannel('الروم');
@@ -171,7 +168,7 @@ client.on('interactionCreate', async interaction => {
         let answer = '';
         if (interaction.values[0] === 'q1') answer = 'نوفر وسائل دفع متعددة تشمل بطاقات مدى، فودافون كاش، وباي بال.';
         if (interaction.values[0] === 'q2') answer = 'يتم تسليم الطلب بشكل تلقائي أو عبر فتح تذكرة دعم فني مباشرة.';
-        if (interaction.values[0] === 'q3') answer = 'نعم، جميع خدماتنا مضمونة طوال فترة الاشتراك.';
+        if, (interaction.values[0] === 'q3') answer = 'نعم، جميع خدماتنا مضمونة طوال فترة الاشتراك.';
 
         return interaction.reply({ content: `**الجواب:** ${answer}`, ephemeral: true });
     }
@@ -207,7 +204,6 @@ client.on('interactionCreate', async interaction => {
             .setTimestamp()
             .setFooter({ text: 'Candy Store | Feedback' });
 
-        // جلب الروم المحفوظة لهذا السيرفر
         const config = loadConfig();
         const feedbackChannelId = config[interaction.guildId];
 
