@@ -16,7 +16,6 @@ const {
 const fs = require('fs');
 const path = require('path');
 
-// تعريف الـ Intents بشكل صريح ومباشر لتجنب أي خطأ
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -147,7 +146,7 @@ client.on('messageCreate', async message => {
             new ActionRowBuilder().addComponents(messageInput)
         );
 
-        // ملاحظة: الـ Modals تفضل أن تكون عبر Slash Command أو الأزرار التفاعلية لتفادي القيود.
+        // ملاحظة: الـ Modals تفضل أن تكون عبر Slash Command أو الأزرار لتفادي القيود.
     }
 });
 
@@ -167,8 +166,8 @@ client.on('interactionCreate', async interaction => {
     if (interaction.isStringSelectMenu() && interaction.customId === 'faq_select') {
         let answer = '';
         if (interaction.values[0] === 'q1') answer = 'نوفر وسائل دفع متعددة تشمل بطاقات مدى، فودافون كاش، وباي بال.';
-        if (interaction.values[0] === 'q2') answer = 'يتم تسليم الطلب بشكل تلقائي أو عبر فتح تذكرة دعم فني مباشرة.';
-        if, (interaction.values[0] === 'q3') answer = 'نعم، جميع خدماتنا مضمونة طوال فترة الاشتراك.';
+        else if (interaction.values[0] === 'q2') answer = 'يتم تسليم الطلب بشكل تلقائي أو عبر فتح تذكرة دعم فني مباشرة.';
+        else if (interaction.values[0] === 'q3') answer = 'نعم، جميع خدماتنا مضمونة طوال فترة الاشتراك.';
 
         return interaction.reply({ content: `**الجواب:** ${answer}`, ephemeral: true });
     }
