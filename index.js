@@ -195,7 +195,7 @@ function buildSetPanelModal() {
   return modal;
 }
 
-// ** المودال الجديد للتقييم (يطلب فقط المنتج والرسالة) **
+// ** مودال التقييم الجديد (يطلب فقط المنتج والرسالة) **
 function buildReviewModal(rating) {
   const modal = new ModalBuilder()
     .setCustomId(`review_modal|${rating}`)  // نمرر التقييم في customId
@@ -235,7 +235,7 @@ const commands = [
     .setDescription('إرسال بانل المتجر مع المنتجات'),
   new SlashCommandBuilder()
     .setName('تقييم')
-    .setDescription('إرسال بانل تقييم مع أزرار تفاعلية'),  // تم تغيير الوصف
+    .setDescription('إرسال بانل تقييم مع قائمة منسدلة للاختيار'), // وصف جديد
   new SlashCommandBuilder()
     .setName('اضافة_سؤال')
     .setDescription('إضافة سؤال جديد للأسئلة الشائعة')
@@ -304,26 +304,29 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (interaction.commandName === 'تقييم') {
-      // ** إرسال بانل التقييم مع الأزرار **
+      // ** إرسال بانل التقييم مع القائمة المنسدلة بدلاً من الأزرار **
       const embed = new EmbedBuilder()
         .setColor(EMBED_COLOR)
         .setTitle('⭐ تقييم التجربة')
-        .setDescription('اختر عدد النجوم التي تعكس تجربتك، ثم اكتب ملاحظاتك في النافذة المنبثقة.')
+        .setDescription('اختر عدد النجوم التي تعكس تجربتك من القائمة المنسدلة، ثم اكتب ملاحظاتك.')
         .setImage(cfg.review_image || 'https://example.com/review_default.png')
         .setFooter({ text: 'تقييمك يهمنا ❤️' });
 
-      // إنشاء 5 أزرار للتقييم (1-5 نجوم)
-      const row = new ActionRowBuilder();
-      for (let i = 1; i <= 5; i++) {
-        const label = '⭐'.repeat(i);
-        row.addComponents(
-          new ButtonBuilder()
-            .setCustomId(`review_${i}`)
-            .setLabel(label)
-            .setStyle(ButtonStyle.Primary)
-        );
-      }
-      // إضافة زر إلغاء (اختياري) لإخفاء الرسالة
+      // إنشاء قائمة منسدلة للتقييم (1-5 نجوم)
+      const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId('review_select')
+        .setPlaceholder('اختر تقييمك...')
+        .addOptions([
+          { label: '⭐', description: 'نجمة واحدة', value: '1' },
+          { label: '⭐⭐', description: 'نجمتان', value: '2' },
+          { label: '⭐⭐⭐', description: 'ثلاث نجوم', value: '3' },
+          { label: '⭐⭐⭐⭐', description: 'أربع نجوم', value: '4' },
+          { label: '⭐⭐⭐⭐⭐', description: 'خمس نجوم', value: '5' }
+        ]);
+
+      const row = new ActionRowBuilder().addComponents(selectMenu);
+
+      // زر إلغاء (اختياري) - يمكن حذفه
       const cancelRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId('review_cancel')
@@ -371,7 +374,7 @@ client.on('interactionCreate', async interaction => {
     }
   }
 
-  // ---------- SELECT MENU (FAQ / STORE) ----------
+  // ---------- SELECT MENU (FAQ / STORE / REVIEW) ----------
   if (interaction.isStringSelectMenu()) {
     const cfg = loadConfig();
 
@@ -404,6 +407,18 @@ client.on('interactionCreate', async interaction => {
         .setDescription(`السعر: ${prod.price || 'غير محدد'}`)
         .setFooter({ text: 'متجرنا' });
       await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
+
+    // ** قائمة التقييم المنسدلة **
+    if (interaction.customId === 'review_select') {
+      const rating = parseInt(interaction.values[0]);
+      if (isNaN(rating) || rating < 1 || rating > 5) {
+        await interaction.reply({ content: '❌ تقييم غير صالح.', ephemeral: true });
+        return;
+      }
+      // عرض المودال مع التقييم المختار
+      await interaction.showModal(buildReviewModal(rating));
       return;
     }
   }
@@ -452,18 +467,6 @@ client.on('interactionCreate', async interaction => {
           { name: 'مستوى الخادم', value: `Level ${tier}`, inline: true }
         );
       await interaction.reply({ embeds: [embed], ephemeral: true });
-      return;
-    }
-
-    // ** أزرار التقييم (review_1 إلى review_5) **
-    if (interaction.customId.startsWith('review_')) {
-      const rating = parseInt(interaction.customId.split('_')[1]);
-      if (isNaN(rating) || rating < 1 || rating > 5) {
-        await interaction.reply({ content: '❌ تقييم غير صالح.', ephemeral: true });
-        return;
-      }
-      // عرض المودال مع التقييم
-      await interaction.showModal(buildReviewModal(rating));
       return;
     }
 
@@ -538,7 +541,6 @@ client.on('interactionCreate', async interaction => {
         return;
       }
 
-      // الحصول على بيانات المستخدم
       const member = interaction.member;
 
       const embed = new EmbedBuilder()
