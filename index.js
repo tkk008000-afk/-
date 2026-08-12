@@ -1,571 +1,157 @@
-const { Client, GatewayIntentBits, REST, Routes, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, SlashCommandBuilder, PermissionsBitField } = require('discord.js');
-const fs = require('fs');
-const path = require('path');
+import discord
+import asyncio
+import aiohttp
+from discord.ext import commands
+import os
 
-// ---------- CONFIG ----------
-const CONFIG_FILE = path.join(__dirname, 'config.json');
-const DEFAULT_CONFIG = {
-  faq_title: 'الأسئلة الشائعة',
-  faq_desc: 'اختر سؤالك من القائمة',
-  faq_banner: 'https://example.com/faq_banner.png',
-  control_title: 'لوحة التحكم',
-  control_desc: 'تتبع تقدم الخادم',
-  control_banner: 'https://example.com/control_banner.png',
-  store_title: 'المتجر',
-  store_desc: 'اختر منتجاً من القائمة',
-  store_banner: 'https://example.com/store_banner.png',
-  review_channel_id: null,
-  review_image: 'https://example.com/review_default.png',
-  faqs: [],
-  products: []
-};
+TOKEN = input("[*] أدخل توكن الحساب: ")
+SOURCE_ID = int(input("[*] أدخل آيدي السيرفر المصدر: "))
+TARGET_ID = int(input("[*] أدخل آيدي السيرفر الهدف: "))
 
-if (!fs.existsSync(CONFIG_FILE)) {
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(DEFAULT_CONFIG, null, 4), 'utf-8');
-}
+intents = discord.Intents.all()
+bot = commands.Bot(command_prefix="!", self_bot=True, intents=intents)
 
-function loadConfig() {
-  return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
-}
+@bot.event
+async def on_ready():
+    print(f"[+] تم الدخول كـ {bot.user}")
+    source = bot.get_guild(SOURCE_ID)
+    target = bot.get_guild(TARGET_ID)
+    if not source or not target:
+        print("[-] تأكد من الآيديات وصحة التوكن.")
+        await bot.close()
+        return
 
-function saveConfig(cfg) {
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 4), 'utf-8');
-}
+    print("[*] بدء النسخ (بدون حذف أي شيء في الهدف)...")
 
-// ---------- BOT ----------
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
-});
+    # 1. نسخ الاسم والأيقونة (تعديل السيرفر الهدف)
+    await target.edit(name=source.name)
+    if source.icon:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(source.icon.url) as resp:
+                icon_data = await resp.read()
+                await target.edit(icon=icon_data)
+        print("[+] تم نسخ الاسم والأيقونة.")
 
-const EMBED_COLOR = 0x1a0b2e;
+    # 2. نسخ الرتب (مع تجنب @everyone)
+    role_map = {}
+    for role in reversed(source.roles):
+        if role.is_default():
+            continue
+        # نتجنب تكرار الرتب بنفس الاسم (اختياري)
+        existing = discord.utils.get(target.roles, name=role.name)
+        if existing:
+            role_map[role.id] = existing.id
+            print(f"[!] رتبة '{role.name}' موجودة بالفعل، تم ربطها.")
+            continue
+        try:
+            new_role = await target.create_role(
+                name=role.name,
+                permissions=role.permissions,
+                colour=role.colour,
+                hoist=role.hoist,
+                mentionable=role.mentionable
+            )
+            role_map[role.id] = new_role.id
+            print(f"[+] تم نسخ رتبة: {role.name}")
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            print(f"[-] فشل نسخ رتبة {role.name}: {e}")
 
-// ---------- HELPERS ----------
-function buildBaseEmbed(title, desc, banner) {
-  const embed = new EmbedBuilder()
-    .setColor(EMBED_COLOR)
-    .setTitle(title || ' ')
-    .setDescription(desc || ' ')
-    .setImage(banner || null);
-  return embed;
-}
+    # 3. نسخ الفئات والقنوات (بدون حذف)
+    category_map = {}
+    # أولاً: إنشاء الفئات إن لم تكن موجودة
+    for channel in source.channels:
+        if isinstance(channel, discord.CategoryChannel):
+            existing_cat = discord.utils.get(target.categories, name=channel.name)
+            if existing_cat:
+                category_map[channel.id] = existing_cat.id
+                print(f"[!] فئة '{channel.name}' موجودة، تم استخدامها.")
+                # ننسخ الصلاحيات للفئة الموجودة (تحديث)
+                for overwrite in channel.overwrites:
+                    if isinstance(overwrite, discord.Role):
+                        role_id = role_map.get(overwrite.id)
+                        if role_id:
+                            target_role = target.get_role(role_id)
+                            if target_role:
+                                await existing_cat.set_permissions(target_role, overwrite=overwrite)
+                continue
+            try:
+                new_cat = await target.create_category(
+                    name=channel.name,
+                    overwrites={}
+                )
+                category_map[channel.id] = new_cat.id
+                for overwrite in channel.overwrites:
+                    if isinstance(overwrite, discord.Role):
+                        role_id = role_map.get(overwrite.id)
+                        if role_id:
+                            target_role = target.get_role(role_id)
+                            if target_role:
+                                await new_cat.set_permissions(target_role, overwrite=overwrite)
+                print(f"[+] تم نسخ فئة: {channel.name}")
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                print(f"[-] فشل نسخ فئة {channel.name}: {e}")
 
-// ---------- UI COMPONENTS (Builders) ----------
-function getFAQView(faqs) {
-  if (!faqs || faqs.length === 0) {
-    return new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId('faq_dropdown')
-        .setPlaceholder('لا توجد أسئلة حالياً')
-        .setDisabled(true)
-        .addOptions([{ label: 'لا شيء', value: 'none' }])
-    );
-  }
-  const options = faqs.map((faq, i) => ({
-    label: faq.question.length > 100 ? faq.question.substring(0, 100) : faq.question,
-    description: ' ',
-    value: String(i)
-  }));
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId('faq_dropdown')
-    .setPlaceholder('اختر سؤالاً...')
-    .addOptions(options);
-  return new ActionRowBuilder().addComponents(menu);
-}
+    # ثانياً: نسخ القنوات النصية والصوتية
+    for channel in source.channels:
+        if isinstance(channel, discord.TextChannel):
+            parent_id = category_map.get(channel.category_id) if channel.category_id else None
+            parent = target.get_channel(parent_id) if parent_id else None
+            # تحقق من وجود قناة بنفس الاسم ونفس الأب
+            existing_ch = discord.utils.get(target.text_channels, name=channel.name, category=parent)
+            if existing_ch:
+                print(f"[!] قناة نصية '{channel.name}' موجودة، تم تخطيها.")
+                continue
+            try:
+                new_ch = await target.create_text_channel(
+                    name=channel.name,
+                    category=parent,
+                    topic=channel.topic,
+                    slowmode_delay=channel.slowmode_delay,
+                    nsfw=channel.nsfw,
+                    overwrites={}
+                )
+                for overwrite in channel.overwrites:
+                    if isinstance(overwrite, discord.Role):
+                        role_id = role_map.get(overwrite.id)
+                        if role_id:
+                            target_role = target.get_role(role_id)
+                            if target_role:
+                                await new_ch.set_permissions(target_role, overwrite=overwrite)
+                print(f"[+] تم نسخ نصي: {channel.name}")
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                print(f"[-] فشل نسخ نصي {channel.name}: {e}")
 
-function getControlView() {
-  const row = new ActionRowBuilder()
-    .addComponents(
-      new ButtonBuilder()
-        .setCustomId('ctrl_boost')
-        .setLabel('📊 البوستات (Boosts)')
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId('ctrl_nitro')
-        .setLabel('🎮 النيترو (Nitro)')
-        .setStyle(ButtonStyle.Success)
-    );
-  return row;
-}
+        elif isinstance(channel, discord.VoiceChannel):
+            parent_id = category_map.get(channel.category_id) if channel.category_id else None
+            parent = target.get_channel(parent_id) if parent_id else None
+            existing_vc = discord.utils.get(target.voice_channels, name=channel.name, category=parent)
+            if existing_vc:
+                print(f"[!] قناة صوتية '{channel.name}' موجودة، تم تخطيها.")
+                continue
+            try:
+                new_vc = await target.create_voice_channel(
+                    name=channel.name,
+                    category=parent,
+                    bitrate=channel.bitrate,
+                    user_limit=channel.user_limit,
+                    overwrites={}
+                )
+                for overwrite in channel.overwrites:
+                    if isinstance(overwrite, discord.Role):
+                        role_id = role_map.get(overwrite.id)
+                        if role_id:
+                            target_role = target.get_role(role_id)
+                            if target_role:
+                                await new_vc.set_permissions(target_role, overwrite=overwrite)
+                print(f"[+] تم نسخ صوتي: {channel.name}")
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                print(f"[-] فشل نسخ صوتي {channel.name}: {e}")
 
-function getStoreView(products) {
-  if (!products || products.length === 0) {
-    const row = new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId('store_dropdown')
-        .setPlaceholder('لا توجد منتجات')
-        .setDisabled(true)
-        .addOptions([{ label: 'لا شيء', value: 'none' }])
-    );
-    return row;
-  }
-  const options = products.map((prod, i) => ({
-    label: prod.name.length > 100 ? prod.name.substring(0, 100) : prod.name,
-    description: `السعر: ${prod.price || 'غير محدد'}`,
-    value: String(i)
-  }));
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId('store_dropdown')
-    .setPlaceholder('اختر منتجاً...')
-    .addOptions(options);
-  return new ActionRowBuilder().addComponents(menu);
-}
+    print("[✔] اكتمل النسخ (تم تخطي الموجود مسبقاً).")
+    await bot.close()
 
-// ---------- MODALS ----------
-function buildFAQModal() {
-  const modal = new ModalBuilder()
-    .setCustomId('add_faq_modal')
-    .setTitle('إضافة سؤال جديد');
-  const qInput = new TextInputBuilder()
-    .setCustomId('faq_question')
-    .setLabel('السؤال')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true)
-    .setMaxLength(200);
-  const aInput = new TextInputBuilder()
-    .setCustomId('faq_answer')
-    .setLabel('الجواب')
-    .setStyle(TextInputStyle.Paragraph)
-    .setRequired(true)
-    .setMaxLength(1000);
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(qInput),
-    new ActionRowBuilder().addComponents(aInput)
-  );
-  return modal;
-}
-
-function buildProductModal() {
-  const modal = new ModalBuilder()
-    .setCustomId('add_product_modal')
-    .setTitle('إضافة منتج جديد');
-  const nInput = new TextInputBuilder()
-    .setCustomId('prod_name')
-    .setLabel('اسم المنتج')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true)
-    .setMaxLength(100);
-  const pInput = new TextInputBuilder()
-    .setCustomId('prod_price')
-    .setLabel('السعر')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true)
-    .setMaxLength(50);
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(nInput),
-    new ActionRowBuilder().addComponents(pInput)
-  );
-  return modal;
-}
-
-function buildSetPanelModal() {
-  const modal = new ModalBuilder()
-    .setCustomId('set_panel_modal')
-    .setTitle('تعديل إعدادات البانل');
-  const typeInput = new TextInputBuilder()
-    .setCustomId('panel_type')
-    .setLabel('نوع البانل (faq / control / store)')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true)
-    .setPlaceholder('faq');
-  const titleInput = new TextInputBuilder()
-    .setCustomId('panel_title')
-    .setLabel('العنوان الجديد (اتركه فارغاً للتجاهل)')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(false);
-  const descInput = new TextInputBuilder()
-    .setCustomId('panel_desc')
-    .setLabel('الوصف الجديد (اتركه فارغاً)')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(false);
-  const bannerInput = new TextInputBuilder()
-    .setCustomId('panel_banner')
-    .setLabel('رابط البنر الجديد (اتركه فارغاً)')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(false);
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(typeInput),
-    new ActionRowBuilder().addComponents(titleInput),
-    new ActionRowBuilder().addComponents(descInput),
-    new ActionRowBuilder().addComponents(bannerInput)
-  );
-  return modal;
-}
-
-// ** مودال التقييم الجديد (يطلب فقط المنتج والرسالة) **
-function buildReviewModal(rating) {
-  const modal = new ModalBuilder()
-    .setCustomId(`review_modal|${rating}`)  // نمرر التقييم في customId
-    .setTitle(`تقييم التجربة (${rating} ⭐)`);
-  
-  const prodInput = new TextInputBuilder()
-    .setCustomId('review_product')
-    .setLabel('اسم الخدمة / المنتج')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true)
-    .setMaxLength(100);
-  
-  const msgInput = new TextInputBuilder()
-    .setCustomId('review_message')
-    .setLabel('رسالتك للتقييم')
-    .setStyle(TextInputStyle.Paragraph)
-    .setRequired(true)
-    .setMaxLength(500);
-  
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(prodInput),
-    new ActionRowBuilder().addComponents(msgInput)
-  );
-  return modal;
-}
-
-// ---------- SLASH COMMANDS DEFINITIONS ----------
-const commands = [
-  new SlashCommandBuilder()
-    .setName('اسئلة')
-    .setDescription('إرسال بانل الأسئلة الشائعة'),
-  new SlashCommandBuilder()
-    .setName('لوحة_التحكم')
-    .setDescription('إرسال بانل التحكم (بوستات ونيترو)'),
-  new SlashCommandBuilder()
-    .setName('متجر')
-    .setDescription('إرسال بانل المتجر مع المنتجات'),
-  new SlashCommandBuilder()
-    .setName('تقييم')
-    .setDescription('إرسال بانل تقييم مع قائمة منسدلة للاختيار'), // وصف جديد
-  new SlashCommandBuilder()
-    .setName('اضافة_سؤال')
-    .setDescription('إضافة سؤال جديد للأسئلة الشائعة')
-    .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
-  new SlashCommandBuilder()
-    .setName('اضافة_منتج')
-    .setDescription('إضافة منتج جديد للمتجر')
-    .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
-  new SlashCommandBuilder()
-    .setName('تعيين_روم_التقييم')
-    .setDescription('تعيين الروم الذي تصل إليه التقييمات')
-    .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator)
-    .addChannelOption(opt => opt.setName('channel').setDescription('الروم المطلوب').setRequired(true)),
-  new SlashCommandBuilder()
-    .setName('تعيين_صورة_التقييم')
-    .setDescription('تعيين الصورة التي تظهر في تقييم العميل')
-    .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator)
-    .addStringOption(opt => opt.setName('url').setDescription('رابط الصورة').setRequired(true)),
-  new SlashCommandBuilder()
-    .setName('تعديل_بانل')
-    .setDescription('تعديل العنوان والوصف والبنر لأي بانل')
-    .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator)
-];
-
-// ---------- REGISTER COMMANDS ----------
-async function registerCommands() {
-  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-  try {
-    await rest.put(Routes.applicationCommands(client.user.id), { body: commands.map(cmd => cmd.toJSON()) });
-    console.log('✅ Slash commands registered globally.');
-  } catch (err) {
-    console.error('❌ Failed to register commands:', err);
-  }
-}
-
-// ---------- CLIENT EVENTS ----------
-client.once('ready', async () => {
-  console.log(`✅ Logged in as ${client.user.tag}`);
-  await registerCommands();
-});
-
-client.on('interactionCreate', async interaction => {
-  // ---------- SLASH COMMANDS ----------
-  if (interaction.isChatInputCommand()) {
-    const cfg = loadConfig();
-
-    if (interaction.commandName === 'اسئلة') {
-      const embed = buildBaseEmbed(cfg.faq_title, cfg.faq_desc, cfg.faq_banner);
-      const row = getFAQView(cfg.faqs);
-      await interaction.reply({ embeds: [embed], components: [row], ephemeral: false });
-      return;
-    }
-
-    if (interaction.commandName === 'لوحة_التحكم') {
-      const embed = buildBaseEmbed(cfg.control_title, cfg.control_desc, cfg.control_banner);
-      const row = getControlView();
-      await interaction.reply({ embeds: [embed], components: [row], ephemeral: false });
-      return;
-    }
-
-    if (interaction.commandName === 'متجر') {
-      const embed = buildBaseEmbed(cfg.store_title, cfg.store_desc, cfg.store_banner);
-      const row = getStoreView(cfg.products);
-      await interaction.reply({ embeds: [embed], components: [row], ephemeral: false });
-      return;
-    }
-
-    if (interaction.commandName === 'تقييم') {
-      // ** إرسال بانل التقييم مع القائمة المنسدلة بدلاً من الأزرار **
-      const embed = new EmbedBuilder()
-        .setColor(EMBED_COLOR)
-        .setTitle('⭐ تقييم التجربة')
-        .setDescription('اختر عدد النجوم التي تعكس تجربتك من القائمة المنسدلة، ثم اكتب ملاحظاتك.')
-        .setImage(cfg.review_image || 'https://example.com/review_default.png')
-        .setFooter({ text: 'تقييمك يهمنا ❤️' });
-
-      // إنشاء قائمة منسدلة للتقييم (1-5 نجوم)
-      const selectMenu = new StringSelectMenuBuilder()
-        .setCustomId('review_select')
-        .setPlaceholder('اختر تقييمك...')
-        .addOptions([
-          { label: '⭐', description: 'نجمة واحدة', value: '1' },
-          { label: '⭐⭐', description: 'نجمتان', value: '2' },
-          { label: '⭐⭐⭐', description: 'ثلاث نجوم', value: '3' },
-          { label: '⭐⭐⭐⭐', description: 'أربع نجوم', value: '4' },
-          { label: '⭐⭐⭐⭐⭐', description: 'خمس نجوم', value: '5' }
-        ]);
-
-      const row = new ActionRowBuilder().addComponents(selectMenu);
-
-      // زر إلغاء (اختياري) - يمكن حذفه
-      const cancelRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId('review_cancel')
-          .setLabel('❌ إلغاء')
-          .setStyle(ButtonStyle.Secondary)
-      );
-
-      await interaction.reply({ embeds: [embed], components: [row, cancelRow], ephemeral: false });
-      return;
-    }
-
-    if (interaction.commandName === 'اضافة_سؤال') {
-      await interaction.showModal(buildFAQModal());
-      return;
-    }
-
-    if (interaction.commandName === 'اضافة_منتج') {
-      await interaction.showModal(buildProductModal());
-      return;
-    }
-
-    if (interaction.commandName === 'تعيين_روم_التقييم') {
-      const channel = interaction.options.getChannel('channel');
-      if (!channel || channel.type !== 0) {
-        await interaction.reply({ content: '❌ الرجاء تحديد روم نصي صالح.', ephemeral: true });
-        return;
-      }
-      cfg.review_channel_id = channel.id;
-      saveConfig(cfg);
-      await interaction.reply({ content: `✅ تم تعيين روم التقييمات إلى ${channel.toString()}`, ephemeral: true });
-      return;
-    }
-
-    if (interaction.commandName === 'تعيين_صورة_التقييم') {
-      const url = interaction.options.getString('url');
-      cfg.review_image = url;
-      saveConfig(cfg);
-      await interaction.reply({ content: '✅ تم تحديث صورة التقييم.', ephemeral: true });
-      return;
-    }
-
-    if (interaction.commandName === 'تعديل_بانل') {
-      await interaction.showModal(buildSetPanelModal());
-      return;
-    }
-  }
-
-  // ---------- SELECT MENU (FAQ / STORE / REVIEW) ----------
-  if (interaction.isStringSelectMenu()) {
-    const cfg = loadConfig();
-
-    if (interaction.customId === 'faq_dropdown') {
-      const idx = parseInt(interaction.values[0]);
-      if (isNaN(idx) || idx < 0 || idx >= cfg.faqs.length) {
-        await interaction.reply({ content: '❌ سؤال غير صالح.', ephemeral: true });
-        return;
-      }
-      const faq = cfg.faqs[idx];
-      const embed = new EmbedBuilder()
-        .setColor(EMBED_COLOR)
-        .setTitle(faq.question)
-        .setDescription(faq.answer)
-        .setFooter({ text: 'الرد التلقائي' });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
-      return;
-    }
-
-    if (interaction.customId === 'store_dropdown') {
-      const idx = parseInt(interaction.values[0]);
-      if (isNaN(idx) || idx < 0 || idx >= cfg.products.length) {
-        await interaction.reply({ content: '❌ منتج غير صالح.', ephemeral: true });
-        return;
-      }
-      const prod = cfg.products[idx];
-      const embed = new EmbedBuilder()
-        .setColor(EMBED_COLOR)
-        .setTitle(prod.name)
-        .setDescription(`السعر: ${prod.price || 'غير محدد'}`)
-        .setFooter({ text: 'متجرنا' });
-      await interaction.reply({ embeds: [embed], ephemeral: true });
-      return;
-    }
-
-    // ** قائمة التقييم المنسدلة **
-    if (interaction.customId === 'review_select') {
-      const rating = parseInt(interaction.values[0]);
-      if (isNaN(rating) || rating < 1 || rating > 5) {
-        await interaction.reply({ content: '❌ تقييم غير صالح.', ephemeral: true });
-        return;
-      }
-      // عرض المودال مع التقييم المختار
-      await interaction.showModal(buildReviewModal(rating));
-      return;
-    }
-  }
-
-  // ---------- BUTTONS ----------
-  if (interaction.isButton()) {
-    const guild = interaction.guild;
-    if (!guild) {
-      await interaction.reply({ content: '❌ لا يمكن استخدام هذا الزر خارج الخادم.', ephemeral: true });
-      return;
-    }
-
-    // أزرار التحكم (بوستات / نيترو)
-    if (interaction.customId === 'ctrl_boost') {
-      const count = guild.premiumSubscriptionCount || 0;
-      const tier = guild.premiumTier;
-      const embed = new EmbedBuilder()
-        .setColor(EMBED_COLOR)
-        .setTitle('تقدم البوستات')
-        .addFields(
-          { name: 'عدد البوستات', value: String(count), inline: true },
-          { name: 'المستوى الحالي', value: `Level ${tier}`, inline: true }
-        );
-      if (tier < 3) {
-        const needed = { 0: 2, 1: 7, 2: 14 }[tier] || 0;
-        const progress = needed > 0 ? Math.min((count / needed) * 100, 100) : 0;
-        embed.addFields(
-          { name: 'المطلوب للمستوى التالي', value: `${needed} بوست`, inline: true },
-          { name: 'التقدم', value: `${progress.toFixed(1)}%`, inline: false }
-        );
-      } else {
-        embed.addFields({ name: 'المستوى', value: 'الأقصى (Level 3)', inline: false });
-      }
-      await interaction.reply({ embeds: [embed], ephemeral: true });
-      return;
-    }
-
-    if (interaction.customId === 'ctrl_nitro') {
-      const count = guild.premiumSubscriptionCount || 0;
-      const tier = guild.premiumTier;
-      const embed = new EmbedBuilder()
-        .setColor(EMBED_COLOR)
-        .setTitle('حالة النيترو')
-        .addFields(
-          { name: 'عدد البوستات', value: String(count), inline: true },
-          { name: 'مستوى الخادم', value: `Level ${tier}`, inline: true }
-        );
-      await interaction.reply({ embeds: [embed], ephemeral: true });
-      return;
-    }
-
-    // زر الإلغاء (يحذف الرسالة)
-    if (interaction.customId === 'review_cancel') {
-      await interaction.message.delete().catch(() => {});
-      await interaction.reply({ content: '✅ تم إلغاء التقييم.', ephemeral: true });
-      return;
-    }
-  }
-
-  // ---------- MODALS ----------
-  if (interaction.isModalSubmit()) {
-    const cfg = loadConfig();
-
-    if (interaction.customId === 'add_faq_modal') {
-      const question = interaction.fields.getTextInputValue('faq_question');
-      const answer = interaction.fields.getTextInputValue('faq_answer');
-      cfg.faqs.push({ question, answer });
-      saveConfig(cfg);
-      await interaction.reply({ content: '✅ تم إضافة السؤال بنجاح.', ephemeral: true });
-      return;
-    }
-
-    if (interaction.customId === 'add_product_modal') {
-      const name = interaction.fields.getTextInputValue('prod_name');
-      const price = interaction.fields.getTextInputValue('prod_price');
-      cfg.products.push({ name, price });
-      saveConfig(cfg);
-      await interaction.reply({ content: '✅ تم إضافة المنتج بنجاح.', ephemeral: true });
-      return;
-    }
-
-    if (interaction.customId === 'set_panel_modal') {
-      const type = interaction.fields.getTextInputValue('panel_type').trim().toLowerCase();
-      if (!['faq', 'control', 'store'].includes(type)) {
-        await interaction.reply({ content: '❌ النوع يجب أن يكون faq أو control أو store', ephemeral: true });
-        return;
-      }
-      const newTitle = interaction.fields.getTextInputValue('panel_title').trim();
-      const newDesc = interaction.fields.getTextInputValue('panel_desc').trim();
-      const newBanner = interaction.fields.getTextInputValue('panel_banner').trim();
-      const prefix = type;
-      if (newTitle) cfg[`${prefix}_title`] = newTitle;
-      if (newDesc) cfg[`${prefix}_desc`] = newDesc;
-      if (newBanner) cfg[`${prefix}_banner`] = newBanner;
-      saveConfig(cfg);
-      await interaction.reply({ content: `✅ تم تحديث بانل ${type} بنجاح.`, ephemeral: true });
-      return;
-    }
-
-    // ** مودال التقييم الجديد **
-    if (interaction.customId.startsWith('review_modal|')) {
-      const rating = parseInt(interaction.customId.split('|')[1]);
-      if (isNaN(rating) || rating < 1 || rating > 5) {
-        await interaction.reply({ content: '❌ حدث خطأ في التقييم.', ephemeral: true });
-        return;
-      }
-
-      const product = interaction.fields.getTextInputValue('review_product');
-      const message = interaction.fields.getTextInputValue('review_message');
-      const stars = '⭐'.repeat(rating);
-
-      const channelId = cfg.review_channel_id;
-      if (!channelId) {
-        await interaction.reply({ content: '❌ لم يتم تعيين روم التقييمات. استخدم `/تعيين_روم_التقييم`', ephemeral: true });
-        return;
-      }
-      const channel = interaction.guild.channels.cache.get(channelId);
-      if (!channel || channel.type !== 0) {
-        await interaction.reply({ content: '❌ الروم المحدد غير موجود أو ليس نصياً.', ephemeral: true });
-        return;
-      }
-
-      const member = interaction.member;
-
-      const embed = new EmbedBuilder()
-        .setColor(EMBED_COLOR)
-        .setTitle('📝 تقييم جديد')
-        .setThumbnail(cfg.review_image || 'https://example.com/default.png')
-        .addFields(
-          { name: '👤 العميل', value: `<@${member.id}>`, inline: true },
-          { name: '🛒 المنتج', value: `\`${product}\``, inline: true },
-          { name: '⭐ التقييم', value: stars, inline: true },
-          { name: '💬 رسالة التقييم', value: message || 'لا يوجد تعليق', inline: false }
-        )
-        .setFooter({ text: 'شكراً لتقييمك' });
-
-      await channel.send({ embeds: [embed] });
-      await interaction.reply({ content: '✅ تم إرسال تقييمك بنجاح. شكراً لك!', ephemeral: true });
-      return;
-    }
-  }
-});
-
-// ---------- START BOT ----------
-const token = process.env.DISCORD_TOKEN;
-if (!token) {
-  console.error('❌ DISCORD_TOKEN environment variable is required.');
-  process.exit(1);
-}
-client.login(token);
+bot.run(TOKEN, bot=False)
