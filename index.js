@@ -1,11 +1,16 @@
 const { Client, Intents, MessageEmbed, MessageActionRow, MessageButton, Modal, TextInputComponent } = require('discord.js-selfbot-v13');
-const readline = require('readline');
 
-// التوكن الأساسي لتشغيل البوت (للأوامر فقط)
-const MAIN_TOKEN = process.env.TOKEN || 'ضع_توكنك_هنا';
+// قراءة التوكن الأساسي من متغيرات البيئة
+const MAIN_TOKEN = process.env.TOKEN;
+if (!MAIN_TOKEN) {
+  console.error('[ERROR] لم يتم تعيين متغير البيئة TOKEN.');
+  console.error('أضف TOKEN في إعدادات Railway ثم أعد النشر.');
+  process.exit(1); // يخرج بدون إعادة تشغيل تلقائية
+}
 
+// تهيئة العميل الأساسي (بدون Intents لأنها غير مدعومة في selfbot)
 const client = new Client({
-  intents: [Intents.FLAGS.GUILDS, Intents.FLAGS.GUILD_MESSAGES, Intents.FLAGS.DIRECT_MESSAGES]
+  intents: []
 });
 
 client.on('ready', () => {
@@ -38,7 +43,6 @@ client.on('interactionCreate', async (interaction) => {
   if (!interaction.isButton()) return;
   if (interaction.customId !== 'open_copy_modal') return;
 
-  // إنشاء المودال
   const modal = new Modal()
     .setCustomId('copy_modal_submit')
     .setTitle('بيانات النسخ');
@@ -84,7 +88,6 @@ client.on('interactionCreate', async (interaction) => {
 
   await interaction.editReply({ content: '⏳ جارٍ البدء في النسخ... سأبلغك عند الانتهاء.' });
 
-  // تشغيل عملية النسخ في خلفية باستخدام التوكن المدخل
   await runCopy(token, sourceId, targetId, interaction);
 });
 
@@ -93,7 +96,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
   const targetId = BigInt(targetIdStr);
 
   const copyClient = new Client({
-    intents: [Intents.FLAGS.GUILDS, Intents.FLAGS.GUILD_MESSAGES]
+    intents: [] // لا داعي للـ Intents في النسخ
   });
 
   let done = false;
@@ -110,7 +113,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
     }
 
     try {
-      // 1. نسخ الاسم والأيقونة
+      // نسخ الاسم والأيقونة
       await target.setName(source.name);
       if (source.iconURL()) {
         const iconData = await fetch(source.iconURL({ dynamic: true, format: 'png', size: 1024 }))
@@ -118,7 +121,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
         await target.setIcon(Buffer.from(iconData));
       }
 
-      // 2. نسخ الرتب
+      // نسخ الرتب (مع تجنب التكرار)
       const roleMap = new Map();
       for (const role of [...source.roles.cache.values()].reverse()) {
         if (role.id === source.roles.everyone.id) continue;
@@ -138,7 +141,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
         await sleep(500);
       }
 
-      // 3. نسخ الفئات والقنوات
+      // نسخ الفئات والقنوات
       const categoryMap = new Map();
       for (const channel of source.channels.cache.values()) {
         if (channel.type === 'GUILD_CATEGORY') {
@@ -203,7 +206,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
     done = true;
   });
 
-  // مهلة 60 ثانية ثم إنهاء الجلسة إن علقت
+  // مهلة 60 ثانية
   setTimeout(() => {
     if (!done) {
       copyClient.destroy();
@@ -217,4 +220,7 @@ function sleep(ms) {
 }
 
 // تسجيل الدخول بالتوكن الأساسي
-client.login(MAIN_TOKEN);
+client.login(MAIN_TOKEN).catch(err => {
+  console.error('[ERROR] فشل تسجيل الدخول بالتوكن الأساسي:', err.message);
+  process.exit(1);
+});
