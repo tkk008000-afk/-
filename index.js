@@ -1,17 +1,14 @@
-const { Client, Intents, MessageEmbed, MessageActionRow, MessageButton, Modal, TextInputComponent } = require('discord.js-selfbot-v13');
+const { Client, MessageEmbed, MessageActionRow, MessageButton, Modal, TextInputComponent } = require('discord.js-selfbot-v13');
 
-// قراءة التوكن الأساسي من متغيرات البيئة
 const MAIN_TOKEN = process.env.TOKEN;
 if (!MAIN_TOKEN) {
   console.error('[ERROR] لم يتم تعيين متغير البيئة TOKEN.');
   console.error('أضف TOKEN في إعدادات Railway ثم أعد النشر.');
-  process.exit(1); // يخرج بدون إعادة تشغيل تلقائية
+  process.exit(1);
 }
 
-// تهيئة العميل الأساسي (بدون Intents لأنها غير مدعومة في selfbot)
-const client = new Client({
-  intents: []
-});
+// عميل أساسي بدون أي intents (غير مطلوبة للـ self-bot)
+const client = new Client();
 
 client.on('ready', () => {
   console.log(`[+] البوت الأساسي دخل كـ ${client.user.tag}`);
@@ -95,9 +92,8 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
   const sourceId = BigInt(sourceIdStr);
   const targetId = BigInt(targetIdStr);
 
-  const copyClient = new Client({
-    intents: [] // لا داعي للـ Intents في النسخ
-  });
+  // عميل النسخ بدون intents أيضاً
+  const copyClient = new Client();
 
   let done = false;
 
@@ -219,7 +215,6 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// تسجيل الدخول بالتوكن الأساسي
 client.login(MAIN_TOKEN).catch(err => {
   console.error('[ERROR] فشل تسجيل الدخول بالتوكن الأساسي:', err.message);
   process.exit(1);
