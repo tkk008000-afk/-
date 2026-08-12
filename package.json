@@ -1,12 +1,16 @@
 {
-  "name": "discord-copy-guild",
+  "name": "discord-copy-bot",
   "version": "1.0.0",
-  "description": "Self-bot to copy guild structure without deletion",
+  "description": "Bot to copy guilds using user token",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
+    "discord.js": "^14.14.1",
     "discord.js-selfbot-v13": "^3.1.6"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
