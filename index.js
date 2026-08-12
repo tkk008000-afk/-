@@ -1,157 +1,181 @@
-import discord
-import asyncio
-import aiohttp
-from discord.ext import commands
-import os
+const { Client, Intents } = require('discord.js-selfbot-v13');
+const readline = require('readline').createInterface({
+  input: process.stdin,
+  output: process.stdout
+});
 
-TOKEN = input("[*] أدخل توكن الحساب: ")
-SOURCE_ID = int(input("[*] أدخل آيدي السيرفر المصدر: "))
-TARGET_ID = int(input("[*] أدخل آيدي السيرفر الهدف: "))
+const ask = (query) => new Promise(resolve => readline.question(query, resolve));
 
-intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="!", self_bot=True, intents=intents)
+(async () => {
+  const token = await ask('[*] أدخل توكن الحساب: ');
+  const sourceId = await ask('[*] أدخل آيدي السيرفر المصدر: ');
+  const targetId = await ask('[*] أدخل آيدي السيرفر الهدف: ');
 
-@bot.event
-async def on_ready():
-    print(f"[+] تم الدخول كـ {bot.user}")
-    source = bot.get_guild(SOURCE_ID)
-    target = bot.get_guild(TARGET_ID)
-    if not source or not target:
-        print("[-] تأكد من الآيديات وصحة التوكن.")
-        await bot.close()
-        return
+  const client = new Client({
+    intents: [Intents.FLAGS.GUILDS, Intents.FLAGS.GUILD_MESSAGES]
+  });
 
-    print("[*] بدء النسخ (بدون حذف أي شيء في الهدف)...")
+  client.on('ready', async () => {
+    console.log(`[+] تم الدخول كـ ${client.user.tag}`);
+    const source = client.guilds.cache.get(sourceId);
+    const target = client.guilds.cache.get(targetId);
+    if (!source || !target) {
+      console.log('[-] تأكد من الآيديات وصحة التوكن.');
+      process.exit(0);
+    }
 
-    # 1. نسخ الاسم والأيقونة (تعديل السيرفر الهدف)
-    await target.edit(name=source.name)
-    if source.icon:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(source.icon.url) as resp:
-                icon_data = await resp.read()
-                await target.edit(icon=icon_data)
-        print("[+] تم نسخ الاسم والأيقونة.")
+    console.log('[*] بدء النسخ (بدون حذف أي شيء في الهدف)...');
 
-    # 2. نسخ الرتب (مع تجنب @everyone)
-    role_map = {}
-    for role in reversed(source.roles):
-        if role.is_default():
-            continue
-        # نتجنب تكرار الرتب بنفس الاسم (اختياري)
-        existing = discord.utils.get(target.roles, name=role.name)
-        if existing:
-            role_map[role.id] = existing.id
-            print(f"[!] رتبة '{role.name}' موجودة بالفعل، تم ربطها.")
-            continue
-        try:
-            new_role = await target.create_role(
-                name=role.name,
-                permissions=role.permissions,
-                colour=role.colour,
-                hoist=role.hoist,
-                mentionable=role.mentionable
-            )
-            role_map[role.id] = new_role.id
-            print(f"[+] تم نسخ رتبة: {role.name}")
-            await asyncio.sleep(0.5)
-        except Exception as e:
-            print(f"[-] فشل نسخ رتبة {role.name}: {e}")
+    // 1. نسخ الاسم والأيقونة
+    await target.setName(source.name);
+    if (source.iconURL()) {
+      const iconData = await fetch(source.iconURL({ dynamic: true, format: 'png', size: 1024 }))
+        .then(res => res.arrayBuffer());
+      await target.setIcon(Buffer.from(iconData));
+      console.log('[+] تم نسخ الاسم والأيقونة.');
+    }
 
-    # 3. نسخ الفئات والقنوات (بدون حذف)
-    category_map = {}
-    # أولاً: إنشاء الفئات إن لم تكن موجودة
-    for channel in source.channels:
-        if isinstance(channel, discord.CategoryChannel):
-            existing_cat = discord.utils.get(target.categories, name=channel.name)
-            if existing_cat:
-                category_map[channel.id] = existing_cat.id
-                print(f"[!] فئة '{channel.name}' موجودة، تم استخدامها.")
-                # ننسخ الصلاحيات للفئة الموجودة (تحديث)
-                for overwrite in channel.overwrites:
-                    if isinstance(overwrite, discord.Role):
-                        role_id = role_map.get(overwrite.id)
-                        if role_id:
-                            target_role = target.get_role(role_id)
-                            if target_role:
-                                await existing_cat.set_permissions(target_role, overwrite=overwrite)
-                continue
-            try:
-                new_cat = await target.create_category(
-                    name=channel.name,
-                    overwrites={}
-                )
-                category_map[channel.id] = new_cat.id
-                for overwrite in channel.overwrites:
-                    if isinstance(overwrite, discord.Role):
-                        role_id = role_map.get(overwrite.id)
-                        if role_id:
-                            target_role = target.get_role(role_id)
-                            if target_role:
-                                await new_cat.set_permissions(target_role, overwrite=overwrite)
-                print(f"[+] تم نسخ فئة: {channel.name}")
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                print(f"[-] فشل نسخ فئة {channel.name}: {e}")
+    // 2. نسخ الرتب (تجنب @everyone، وتجنب التكرار بالاسم)
+    const roleMap = new Map();
+    for (const role of [...source.roles.cache.values()].reverse()) {
+      if (role.id === source.roles.everyone.id) continue;
+      const existing = target.roles.cache.find(r => r.name === role.name);
+      if (existing) {
+        roleMap.set(role.id, existing.id);
+        console.log(`[!] رتبة '${role.name}' موجودة، تم ربطها.`);
+        continue;
+      }
+      try {
+        const newRole = await target.roles.create({
+          name: role.name,
+          permissions: role.permissions,
+          color: role.color,
+          hoist: role.hoist,
+          mentionable: role.mentionable
+        });
+        roleMap.set(role.id, newRole.id);
+        console.log(`[+] تم نسخ رتبة: ${role.name}`);
+        await sleep(500);
+      } catch (e) {
+        console.log(`[-] فشل نسخ رتبة ${role.name}: ${e.message}`);
+      }
+    }
 
-    # ثانياً: نسخ القنوات النصية والصوتية
-    for channel in source.channels:
-        if isinstance(channel, discord.TextChannel):
-            parent_id = category_map.get(channel.category_id) if channel.category_id else None
-            parent = target.get_channel(parent_id) if parent_id else None
-            # تحقق من وجود قناة بنفس الاسم ونفس الأب
-            existing_ch = discord.utils.get(target.text_channels, name=channel.name, category=parent)
-            if existing_ch:
-                print(f"[!] قناة نصية '{channel.name}' موجودة، تم تخطيها.")
-                continue
-            try:
-                new_ch = await target.create_text_channel(
-                    name=channel.name,
-                    category=parent,
-                    topic=channel.topic,
-                    slowmode_delay=channel.slowmode_delay,
-                    nsfw=channel.nsfw,
-                    overwrites={}
-                )
-                for overwrite in channel.overwrites:
-                    if isinstance(overwrite, discord.Role):
-                        role_id = role_map.get(overwrite.id)
-                        if role_id:
-                            target_role = target.get_role(role_id)
-                            if target_role:
-                                await new_ch.set_permissions(target_role, overwrite=overwrite)
-                print(f"[+] تم نسخ نصي: {channel.name}")
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                print(f"[-] فشل نسخ نصي {channel.name}: {e}")
+    // 3. نسخ الفئات والقنوات (بدون حذف)
+    const categoryMap = new Map();
 
-        elif isinstance(channel, discord.VoiceChannel):
-            parent_id = category_map.get(channel.category_id) if channel.category_id else None
-            parent = target.get_channel(parent_id) if parent_id else None
-            existing_vc = discord.utils.get(target.voice_channels, name=channel.name, category=parent)
-            if existing_vc:
-                print(f"[!] قناة صوتية '{channel.name}' موجودة، تم تخطيها.")
-                continue
-            try:
-                new_vc = await target.create_voice_channel(
-                    name=channel.name,
-                    category=parent,
-                    bitrate=channel.bitrate,
-                    user_limit=channel.user_limit,
-                    overwrites={}
-                )
-                for overwrite in channel.overwrites:
-                    if isinstance(overwrite, discord.Role):
-                        role_id = role_map.get(overwrite.id)
-                        if role_id:
-                            target_role = target.get_role(role_id)
-                            if target_role:
-                                await new_vc.set_permissions(target_role, overwrite=overwrite)
-                print(f"[+] تم نسخ صوتي: {channel.name}")
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                print(f"[-] فشل نسخ صوتي {channel.name}: {e}")
+    // أولاً: الفئات
+    for (const channel of source.channels.cache.values()) {
+      if (channel.type === 'GUILD_CATEGORY') {
+        const existingCat = target.channels.cache.find(
+          c => c.type === 'GUILD_CATEGORY' && c.name === channel.name
+        );
+        if (existingCat) {
+          categoryMap.set(channel.id, existingCat.id);
+          console.log(`[!] فئة '${channel.name}' موجودة، تم استخدامها.`);
+          // تحديث الصلاحيات للفئة الموجودة
+          for (const [overwriteId, overwrite] of channel.permissionOverwrites.cache) {
+            const roleId = roleMap.get(overwriteId) || overwriteId;
+            const targetRole = target.roles.cache.get(roleId) || target.members.cache.get(roleId);
+            if (targetRole) {
+              await existingCat.permissionOverwrites.create(targetRole, overwrite);
+            }
+          }
+          continue;
+        }
+        try {
+          const newCat = await target.channels.create(channel.name, {
+            type: 'GUILD_CATEGORY'
+          });
+          categoryMap.set(channel.id, newCat.id);
+          // نسخ الصلاحيات
+          for (const [overwriteId, overwrite] of channel.permissionOverwrites.cache) {
+            const roleId = roleMap.get(overwriteId) || overwriteId;
+            const targetRole = target.roles.cache.get(roleId) || target.members.cache.get(roleId);
+            if (targetRole) {
+              await newCat.permissionOverwrites.create(targetRole, overwrite);
+            }
+          }
+          console.log(`[+] تم نسخ فئة: ${channel.name}`);
+          await sleep(500);
+        } catch (e) {
+          console.log(`[-] فشل نسخ فئة ${channel.name}: ${e.message}`);
+        }
+      }
+    }
 
-    print("[✔] اكتمل النسخ (تم تخطي الموجود مسبقاً).")
-    await bot.close()
+    // ثانياً: القنوات النصية والصوتية
+    for (const channel of source.channels.cache.values()) {
+      const parentId = channel.parentId ? categoryMap.get(channel.parentId) : null;
+      const parent = parentId ? target.channels.cache.get(parentId) : null;
 
-bot.run(TOKEN, bot=False)
+      if (channel.type === 'GUILD_TEXT') {
+        const existing = target.channels.cache.find(
+          c => c.type === 'GUILD_TEXT' && c.name === channel.name && c.parentId === (parent ? parent.id : null)
+        );
+        if (existing) {
+          console.log(`[!] قناة نصية '${channel.name}' موجودة، تم تخطيها.`);
+          continue;
+        }
+        try {
+          const newCh = await target.channels.create(channel.name, {
+            type: 'GUILD_TEXT',
+            parent: parent,
+            topic: channel.topic,
+            rateLimitPerUser: channel.rateLimitPerUser,
+            nsfw: channel.nsfw
+          });
+          for (const [overwriteId, overwrite] of channel.permissionOverwrites.cache) {
+            const roleId = roleMap.get(overwriteId) || overwriteId;
+            const targetRole = target.roles.cache.get(roleId) || target.members.cache.get(roleId);
+            if (targetRole) {
+              await newCh.permissionOverwrites.create(targetRole, overwrite);
+            }
+          }
+          console.log(`[+] تم نسخ نصي: ${channel.name}`);
+          await sleep(500);
+        } catch (e) {
+          console.log(`[-] فشل نسخ نصي ${channel.name}: ${e.message}`);
+        }
+      }
+
+      if (channel.type === 'GUILD_VOICE') {
+        const existing = target.channels.cache.find(
+          c => c.type === 'GUILD_VOICE' && c.name === channel.name && c.parentId === (parent ? parent.id : null)
+        );
+        if (existing) {
+          console.log(`[!] قناة صوتية '${channel.name}' موجودة، تم تخطيها.`);
+          continue;
+        }
+        try {
+          const newVc = await target.channels.create(channel.name, {
+            type: 'GUILD_VOICE',
+            parent: parent,
+            bitrate: channel.bitrate,
+            userLimit: channel.userLimit
+          });
+          for (const [overwriteId, overwrite] of channel.permissionOverwrites.cache) {
+            const roleId = roleMap.get(overwriteId) || overwriteId;
+            const targetRole = target.roles.cache.get(roleId) || target.members.cache.get(roleId);
+            if (targetRole) {
+              await newVc.permissionOverwrites.create(targetRole, overwrite);
+            }
+          }
+          console.log(`[+] تم نسخ صوتي: ${channel.name}`);
+          await sleep(500);
+        } catch (e) {
+          console.log(`[-] فشل نسخ صوتي ${channel.name}: ${e.message}`);
+        }
+      }
+    }
+
+    console.log('[✔] اكتمل النسخ (تم تخطي الموجود مسبقاً).');
+    process.exit(0);
+  });
+
+  client.login(token);
+})();
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
