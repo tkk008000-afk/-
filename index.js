@@ -1,28 +1,34 @@
-const { Client, MessageEmbed, MessageActionRow, MessageButton, Modal, TextInputComponent } = require('discord.js-selfbot-v13');
+const { Client, Intents, MessageEmbed, MessageActionRow, MessageButton, Modal, TextInputComponent } = require('discord.js');
+const { Client: SelfClient } = require('discord.js-selfbot-v13');
 
-const MAIN_TOKEN = process.env.TOKEN;
-if (!MAIN_TOKEN) {
-  console.error('[ERROR] لم يتم تعيين متغير البيئة TOKEN.');
-  console.error('أضف TOKEN في إعدادات Railway ثم أعد النشر.');
+const BOT_TOKEN = process.env.TOKEN;
+if (!BOT_TOKEN) {
+  console.error('[ERROR] لم يتم تعيين متغير البيئة TOKEN (توكن البوت).');
   process.exit(1);
 }
 
-// عميل أساسي بدون أي intents (غير مطلوبة للـ self-bot)
-const client = new Client();
+// العميل الرئيسي (بوت عادي)
+const client = new Client({
+  intents: [
+    Intents.FLAGS.GUILDS,
+    Intents.FLAGS.GUILD_MESSAGES,
+    Intents.FLAGS.MESSAGE_CONTENT // لقراءة محتوى الرسائل
+  ]
+});
 
 client.on('ready', () => {
-  console.log(`[+] البوت الأساسي دخل كـ ${client.user.tag}`);
-  console.log('[+] اكتب !copy في أي شات لظهور الإمبد مع الزر.');
+  console.log(`[+] البوت دخل كـ ${client.user.tag}`);
+  console.log('[+] جاهز، اكتب !copy في أي شات.');
 });
 
 client.on('messageCreate', async (message) => {
-  if (message.author.id !== client.user.id) return;
+  if (message.author.bot) return;
   if (message.content.toLowerCase() === '!copy') {
     const embed = new MessageEmbed()
       .setTitle('🔄 أداة نسخ السيرفرات')
-      .setDescription('اضغط الزر أدناه لبدء عملية النسخ.\nسيُطلب منك إدخال التوكن، آيدي المصدر، وآيدي الهدف.')
+      .setDescription('اضغط الزر أدناه لبدء عملية النسخ.\nسيُطلب منك إدخال توكن حسابك الشخصي، آيدي المصدر، وآيدي الهدف.')
       .setColor('#2b2d31')
-      .setFooter({ text: 'طلبك قيد التنفيذ...' });
+      .setFooter({ text: 'البوت لا يخزن بياناتك' });
 
     const row = new MessageActionRow()
       .addComponents(
@@ -36,6 +42,7 @@ client.on('messageCreate', async (message) => {
   }
 });
 
+// التعامل مع الأزرار
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isButton()) return;
   if (interaction.customId !== 'open_copy_modal') return;
@@ -46,23 +53,23 @@ client.on('interactionCreate', async (interaction) => {
 
   const tokenInput = new TextInputComponent()
     .setCustomId('token')
-    .setLabel('توكن الحساب (المنفذ)')
+    .setLabel('توكن حسابك الشخصي (Self-Bot)')
     .setStyle('SHORT')
-    .setPlaceholder('أدخل توكن الحساب المراد استخدامه للنسخ')
+    .setPlaceholder('أدخل توكن حسابك')
     .setRequired(true);
 
   const sourceInput = new TextInputComponent()
     .setCustomId('source')
     .setLabel('آيدي السيرفر المصدر')
     .setStyle('SHORT')
-    .setPlaceholder('مثال: 123456789012345678')
+    .setPlaceholder('123456789012345678')
     .setRequired(true);
 
   const targetInput = new TextInputComponent()
     .setCustomId('target')
     .setLabel('آيدي السيرفر الهدف')
     .setStyle('SHORT')
-    .setPlaceholder('مثال: 876543210987654321')
+    .setPlaceholder('876543210987654321')
     .setRequired(true);
 
   modal.addComponents(
@@ -74,26 +81,29 @@ client.on('interactionCreate', async (interaction) => {
   await interaction.showModal(modal);
 });
 
+// التعامل مع إرسال المودال
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isModalSubmit()) return;
   if (interaction.customId !== 'copy_modal_submit') return;
 
   await interaction.deferReply({ ephemeral: true });
-  const token = interaction.fields.getTextInputValue('token');
+
+  const userToken = interaction.fields.getTextInputValue('token');
   const sourceId = interaction.fields.getTextInputValue('source');
   const targetId = interaction.fields.getTextInputValue('target');
 
   await interaction.editReply({ content: '⏳ جارٍ البدء في النسخ... سأبلغك عند الانتهاء.' });
 
-  await runCopy(token, sourceId, targetId, interaction);
+  // تشغيل عملية النسخ باستخدام التوكن الشخصي
+  await runCopy(userToken, sourceId, targetId, interaction);
 });
 
+// دالة النسخ
 async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
   const sourceId = BigInt(sourceIdStr);
   const targetId = BigInt(targetIdStr);
 
-  // عميل النسخ بدون intents أيضاً
-  const copyClient = new Client();
+  const copyClient = new SelfClient(); // عميل Self-Bot
 
   let done = false;
 
@@ -101,6 +111,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
     console.log(`[+] جلسة النسخ دخلت كـ ${copyClient.user.tag}`);
     const source = copyClient.guilds.cache.get(sourceId.toString());
     const target = copyClient.guilds.cache.get(targetId.toString());
+
     if (!source || !target) {
       await interaction.editReply({ content: '❌ تأكد من الآيديات وصحة التوكن.' });
       copyClient.destroy();
@@ -109,7 +120,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
     }
 
     try {
-      // نسخ الاسم والأيقونة
+      // 1. نسخ الاسم والأيقونة
       await target.setName(source.name);
       if (source.iconURL()) {
         const iconData = await fetch(source.iconURL({ dynamic: true, format: 'png', size: 1024 }))
@@ -117,7 +128,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
         await target.setIcon(Buffer.from(iconData));
       }
 
-      // نسخ الرتب (مع تجنب التكرار)
+      // 2. نسخ الرتب (مع تجنب التكرار)
       const roleMap = new Map();
       for (const role of [...source.roles.cache.values()].reverse()) {
         if (role.id === source.roles.everyone.id) continue;
@@ -137,7 +148,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
         await sleep(500);
       }
 
-      // نسخ الفئات والقنوات
+      // 3. نسخ الفئات
       const categoryMap = new Map();
       for (const channel of source.channels.cache.values()) {
         if (channel.type === 'GUILD_CATEGORY') {
@@ -154,6 +165,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
         }
       }
 
+      // 4. نسخ القنوات النصية والصوتية
       for (const channel of source.channels.cache.values()) {
         const parentId = channel.parentId ? categoryMap.get(channel.parentId) : null;
         const parent = parentId ? target.channels.cache.get(parentId) : null;
@@ -198,7 +210,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
   });
 
   copyClient.login(token).catch(async (e) => {
-    await interaction.editReply({ content: `❌ فشل تسجيل الدخول بالتوكن: ${e.message}` });
+    await interaction.editReply({ content: `❌ فشل تسجيل الدخول بالتوكن الشخصي: ${e.message}` });
     done = true;
   });
 
@@ -215,7 +227,8 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-client.login(MAIN_TOKEN).catch(err => {
-  console.error('[ERROR] فشل تسجيل الدخول بالتوكن الأساسي:', err.message);
+// تسجيل الدخول بالتوكن الخاص بالبوت
+client.login(BOT_TOKEN).catch(err => {
+  console.error('[ERROR] فشل تسجيل الدخول بالتوكن:', err.message);
   process.exit(1);
 });
