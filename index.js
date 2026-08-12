@@ -1,51 +1,132 @@
-const { Client, Intents } = require('discord.js-selfbot-v13');
-const readline = require('readline').createInterface({
-  input: process.stdin,
-  output: process.stdout
+const { Client, Intents, MessageEmbed, MessageActionRow, MessageButton, Modal, TextInputComponent } = require('discord.js-selfbot-v13');
+const readline = require('readline');
+
+// التوكن الأساسي لتشغيل البوت (للأوامر فقط)
+const MAIN_TOKEN = process.env.TOKEN || 'ضع_توكنك_هنا';
+
+const client = new Client({
+  intents: [Intents.FLAGS.GUILDS, Intents.FLAGS.GUILD_MESSAGES, Intents.FLAGS.DIRECT_MESSAGES]
 });
 
-const ask = (query) => new Promise(resolve => readline.question(query, resolve));
+client.on('ready', () => {
+  console.log(`[+] البوت الأساسي دخل كـ ${client.user.tag}`);
+  console.log('[+] اكتب !copy في أي شات لظهور الإمبد مع الزر.');
+});
 
-(async () => {
-  const token = await ask('[*] أدخل توكن الحساب: ');
-  const sourceId = await ask('[*] أدخل آيدي السيرفر المصدر: ');
-  const targetId = await ask('[*] أدخل آيدي السيرفر الهدف: ');
+client.on('messageCreate', async (message) => {
+  if (message.author.id !== client.user.id) return;
+  if (message.content.toLowerCase() === '!copy') {
+    const embed = new MessageEmbed()
+      .setTitle('🔄 أداة نسخ السيرفرات')
+      .setDescription('اضغط الزر أدناه لبدء عملية النسخ.\nسيُطلب منك إدخال التوكن، آيدي المصدر، وآيدي الهدف.')
+      .setColor('#2b2d31')
+      .setFooter({ text: 'طلبك قيد التنفيذ...' });
 
-  const client = new Client({
+    const row = new MessageActionRow()
+      .addComponents(
+        new MessageButton()
+          .setCustomId('open_copy_modal')
+          .setLabel('📋 نسخ السيرفر')
+          .setStyle('PRIMARY')
+      );
+
+    await message.channel.send({ embeds: [embed], components: [row] });
+  }
+});
+
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isButton()) return;
+  if (interaction.customId !== 'open_copy_modal') return;
+
+  // إنشاء المودال
+  const modal = new Modal()
+    .setCustomId('copy_modal_submit')
+    .setTitle('بيانات النسخ');
+
+  const tokenInput = new TextInputComponent()
+    .setCustomId('token')
+    .setLabel('توكن الحساب (المنفذ)')
+    .setStyle('SHORT')
+    .setPlaceholder('أدخل توكن الحساب المراد استخدامه للنسخ')
+    .setRequired(true);
+
+  const sourceInput = new TextInputComponent()
+    .setCustomId('source')
+    .setLabel('آيدي السيرفر المصدر')
+    .setStyle('SHORT')
+    .setPlaceholder('مثال: 123456789012345678')
+    .setRequired(true);
+
+  const targetInput = new TextInputComponent()
+    .setCustomId('target')
+    .setLabel('آيدي السيرفر الهدف')
+    .setStyle('SHORT')
+    .setPlaceholder('مثال: 876543210987654321')
+    .setRequired(true);
+
+  modal.addComponents(
+    new MessageActionRow().addComponents(tokenInput),
+    new MessageActionRow().addComponents(sourceInput),
+    new MessageActionRow().addComponents(targetInput)
+  );
+
+  await interaction.showModal(modal);
+});
+
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isModalSubmit()) return;
+  if (interaction.customId !== 'copy_modal_submit') return;
+
+  await interaction.deferReply({ ephemeral: true });
+  const token = interaction.fields.getTextInputValue('token');
+  const sourceId = interaction.fields.getTextInputValue('source');
+  const targetId = interaction.fields.getTextInputValue('target');
+
+  await interaction.editReply({ content: '⏳ جارٍ البدء في النسخ... سأبلغك عند الانتهاء.' });
+
+  // تشغيل عملية النسخ في خلفية باستخدام التوكن المدخل
+  await runCopy(token, sourceId, targetId, interaction);
+});
+
+async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
+  const sourceId = BigInt(sourceIdStr);
+  const targetId = BigInt(targetIdStr);
+
+  const copyClient = new Client({
     intents: [Intents.FLAGS.GUILDS, Intents.FLAGS.GUILD_MESSAGES]
   });
 
-  client.on('ready', async () => {
-    console.log(`[+] تم الدخول كـ ${client.user.tag}`);
-    const source = client.guilds.cache.get(sourceId);
-    const target = client.guilds.cache.get(targetId);
+  let done = false;
+
+  copyClient.on('ready', async () => {
+    console.log(`[+] جلسة النسخ دخلت كـ ${copyClient.user.tag}`);
+    const source = copyClient.guilds.cache.get(sourceId.toString());
+    const target = copyClient.guilds.cache.get(targetId.toString());
     if (!source || !target) {
-      console.log('[-] تأكد من الآيديات وصحة التوكن.');
-      process.exit(0);
+      await interaction.editReply({ content: '❌ تأكد من الآيديات وصحة التوكن.' });
+      copyClient.destroy();
+      done = true;
+      return;
     }
 
-    console.log('[*] بدء النسخ (بدون حذف أي شيء في الهدف)...');
-
-    // 1. نسخ الاسم والأيقونة
-    await target.setName(source.name);
-    if (source.iconURL()) {
-      const iconData = await fetch(source.iconURL({ dynamic: true, format: 'png', size: 1024 }))
-        .then(res => res.arrayBuffer());
-      await target.setIcon(Buffer.from(iconData));
-      console.log('[+] تم نسخ الاسم والأيقونة.');
-    }
-
-    // 2. نسخ الرتب (تجنب @everyone، وتجنب التكرار بالاسم)
-    const roleMap = new Map();
-    for (const role of [...source.roles.cache.values()].reverse()) {
-      if (role.id === source.roles.everyone.id) continue;
-      const existing = target.roles.cache.find(r => r.name === role.name);
-      if (existing) {
-        roleMap.set(role.id, existing.id);
-        console.log(`[!] رتبة '${role.name}' موجودة، تم ربطها.`);
-        continue;
+    try {
+      // 1. نسخ الاسم والأيقونة
+      await target.setName(source.name);
+      if (source.iconURL()) {
+        const iconData = await fetch(source.iconURL({ dynamic: true, format: 'png', size: 1024 }))
+          .then(res => res.arrayBuffer());
+        await target.setIcon(Buffer.from(iconData));
       }
-      try {
+
+      // 2. نسخ الرتب
+      const roleMap = new Map();
+      for (const role of [...source.roles.cache.values()].reverse()) {
+        if (role.id === source.roles.everyone.id) continue;
+        const existing = target.roles.cache.find(r => r.name === role.name);
+        if (existing) {
+          roleMap.set(role.id, existing.id);
+          continue;
+        }
         const newRole = await target.roles.create({
           name: role.name,
           permissions: role.permissions,
@@ -54,70 +135,35 @@ const ask = (query) => new Promise(resolve => readline.question(query, resolve))
           mentionable: role.mentionable
         });
         roleMap.set(role.id, newRole.id);
-        console.log(`[+] تم نسخ رتبة: ${role.name}`);
         await sleep(500);
-      } catch (e) {
-        console.log(`[-] فشل نسخ رتبة ${role.name}: ${e.message}`);
       }
-    }
 
-    // 3. نسخ الفئات والقنوات (بدون حذف)
-    const categoryMap = new Map();
-
-    // أولاً: الفئات
-    for (const channel of source.channels.cache.values()) {
-      if (channel.type === 'GUILD_CATEGORY') {
-        const existingCat = target.channels.cache.find(
-          c => c.type === 'GUILD_CATEGORY' && c.name === channel.name
-        );
-        if (existingCat) {
-          categoryMap.set(channel.id, existingCat.id);
-          console.log(`[!] فئة '${channel.name}' موجودة، تم استخدامها.`);
-          // تحديث الصلاحيات للفئة الموجودة
-          for (const [overwriteId, overwrite] of channel.permissionOverwrites.cache) {
-            const roleId = roleMap.get(overwriteId) || overwriteId;
-            const targetRole = target.roles.cache.get(roleId) || target.members.cache.get(roleId);
-            if (targetRole) {
-              await existingCat.permissionOverwrites.create(targetRole, overwrite);
-            }
+      // 3. نسخ الفئات والقنوات
+      const categoryMap = new Map();
+      for (const channel of source.channels.cache.values()) {
+        if (channel.type === 'GUILD_CATEGORY') {
+          const existingCat = target.channels.cache.find(
+            c => c.type === 'GUILD_CATEGORY' && c.name === channel.name
+          );
+          if (existingCat) {
+            categoryMap.set(channel.id, existingCat.id);
+            continue;
           }
-          continue;
-        }
-        try {
-          const newCat = await target.channels.create(channel.name, {
-            type: 'GUILD_CATEGORY'
-          });
+          const newCat = await target.channels.create(channel.name, { type: 'GUILD_CATEGORY' });
           categoryMap.set(channel.id, newCat.id);
-          // نسخ الصلاحيات
-          for (const [overwriteId, overwrite] of channel.permissionOverwrites.cache) {
-            const roleId = roleMap.get(overwriteId) || overwriteId;
-            const targetRole = target.roles.cache.get(roleId) || target.members.cache.get(roleId);
-            if (targetRole) {
-              await newCat.permissionOverwrites.create(targetRole, overwrite);
-            }
-          }
-          console.log(`[+] تم نسخ فئة: ${channel.name}`);
           await sleep(500);
-        } catch (e) {
-          console.log(`[-] فشل نسخ فئة ${channel.name}: ${e.message}`);
         }
       }
-    }
 
-    // ثانياً: القنوات النصية والصوتية
-    for (const channel of source.channels.cache.values()) {
-      const parentId = channel.parentId ? categoryMap.get(channel.parentId) : null;
-      const parent = parentId ? target.channels.cache.get(parentId) : null;
+      for (const channel of source.channels.cache.values()) {
+        const parentId = channel.parentId ? categoryMap.get(channel.parentId) : null;
+        const parent = parentId ? target.channels.cache.get(parentId) : null;
 
-      if (channel.type === 'GUILD_TEXT') {
-        const existing = target.channels.cache.find(
-          c => c.type === 'GUILD_TEXT' && c.name === channel.name && c.parentId === (parent ? parent.id : null)
-        );
-        if (existing) {
-          console.log(`[!] قناة نصية '${channel.name}' موجودة، تم تخطيها.`);
-          continue;
-        }
-        try {
+        if (channel.type === 'GUILD_TEXT') {
+          const existing = target.channels.cache.find(
+            c => c.type === 'GUILD_TEXT' && c.name === channel.name && c.parentId === (parent ? parent.id : null)
+          );
+          if (existing) continue;
           const newCh = await target.channels.create(channel.name, {
             type: 'GUILD_TEXT',
             parent: parent,
@@ -125,57 +171,50 @@ const ask = (query) => new Promise(resolve => readline.question(query, resolve))
             rateLimitPerUser: channel.rateLimitPerUser,
             nsfw: channel.nsfw
           });
-          for (const [overwriteId, overwrite] of channel.permissionOverwrites.cache) {
-            const roleId = roleMap.get(overwriteId) || overwriteId;
-            const targetRole = target.roles.cache.get(roleId) || target.members.cache.get(roleId);
-            if (targetRole) {
-              await newCh.permissionOverwrites.create(targetRole, overwrite);
-            }
-          }
-          console.log(`[+] تم نسخ نصي: ${channel.name}`);
           await sleep(500);
-        } catch (e) {
-          console.log(`[-] فشل نسخ نصي ${channel.name}: ${e.message}`);
         }
-      }
 
-      if (channel.type === 'GUILD_VOICE') {
-        const existing = target.channels.cache.find(
-          c => c.type === 'GUILD_VOICE' && c.name === channel.name && c.parentId === (parent ? parent.id : null)
-        );
-        if (existing) {
-          console.log(`[!] قناة صوتية '${channel.name}' موجودة، تم تخطيها.`);
-          continue;
-        }
-        try {
+        if (channel.type === 'GUILD_VOICE') {
+          const existing = target.channels.cache.find(
+            c => c.type === 'GUILD_VOICE' && c.name === channel.name && c.parentId === (parent ? parent.id : null)
+          );
+          if (existing) continue;
           const newVc = await target.channels.create(channel.name, {
             type: 'GUILD_VOICE',
             parent: parent,
             bitrate: channel.bitrate,
             userLimit: channel.userLimit
           });
-          for (const [overwriteId, overwrite] of channel.permissionOverwrites.cache) {
-            const roleId = roleMap.get(overwriteId) || overwriteId;
-            const targetRole = target.roles.cache.get(roleId) || target.members.cache.get(roleId);
-            if (targetRole) {
-              await newVc.permissionOverwrites.create(targetRole, overwrite);
-            }
-          }
-          console.log(`[+] تم نسخ صوتي: ${channel.name}`);
           await sleep(500);
-        } catch (e) {
-          console.log(`[-] فشل نسخ صوتي ${channel.name}: ${e.message}`);
         }
       }
+
+      await interaction.editReply({ content: '✅ **تم النسخ بنجاح!** (تم تخطي الموجود مسبقاً)' });
+    } catch (err) {
+      await interaction.editReply({ content: `❌ حدث خطأ: ${err.message}` });
     }
 
-    console.log('[✔] اكتمل النسخ (تم تخطي الموجود مسبقاً).');
-    process.exit(0);
+    copyClient.destroy();
+    done = true;
   });
 
-  client.login(token);
-})();
+  copyClient.login(token).catch(async (e) => {
+    await interaction.editReply({ content: `❌ فشل تسجيل الدخول بالتوكن: ${e.message}` });
+    done = true;
+  });
+
+  // مهلة 60 ثانية ثم إنهاء الجلسة إن علقت
+  setTimeout(() => {
+    if (!done) {
+      copyClient.destroy();
+      interaction.editReply({ content: '⏰ انتهت المهلة، حاول مرة أخرى.' }).catch(() => {});
+    }
+  }, 60000);
+}
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
+
+// تسجيل الدخول بالتوكن الأساسي
+client.login(MAIN_TOKEN);
