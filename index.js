@@ -66,7 +66,6 @@ function getFAQView(faqs) {
   }
   const options = faqs.map((faq, i) => ({
     label: faq.question.length > 100 ? faq.question.substring(0, 100) : faq.question,
-    // تم حذف الجواب من الوصف - الآن لا يظهر أي نص تحت السؤال في القائمة
     description: ' ',
     value: String(i)
   }));
@@ -196,36 +195,28 @@ function buildSetPanelModal() {
   return modal;
 }
 
-function buildReviewModal() {
+// ** المودال الجديد للتقييم (يطلب فقط المنتج والرسالة) **
+function buildReviewModal(rating) {
   const modal = new ModalBuilder()
-    .setCustomId('review_modal')
-    .setTitle('تقييم العميل');
-  const idInput = new TextInputBuilder()
-    .setCustomId('review_member_id')
-    .setLabel('آيدي العضو (ID)')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true);
+    .setCustomId(`review_modal|${rating}`)  // نمرر التقييم في customId
+    .setTitle(`تقييم التجربة (${rating} ⭐)`);
+  
   const prodInput = new TextInputBuilder()
     .setCustomId('review_product')
     .setLabel('اسم الخدمة / المنتج')
     .setStyle(TextInputStyle.Short)
-    .setRequired(true);
-  const rateInput = new TextInputBuilder()
-    .setCustomId('review_rating')
-    .setLabel('التقييم (1-5)')
-    .setStyle(TextInputStyle.Short)
     .setRequired(true)
-    .setMaxLength(1);
+    .setMaxLength(100);
+  
   const msgInput = new TextInputBuilder()
     .setCustomId('review_message')
-    .setLabel('رسالتك للمتجر')
+    .setLabel('رسالتك للتقييم')
     .setStyle(TextInputStyle.Paragraph)
     .setRequired(true)
     .setMaxLength(500);
+  
   modal.addComponents(
-    new ActionRowBuilder().addComponents(idInput),
     new ActionRowBuilder().addComponents(prodInput),
-    new ActionRowBuilder().addComponents(rateInput),
     new ActionRowBuilder().addComponents(msgInput)
   );
   return modal;
@@ -244,7 +235,7 @@ const commands = [
     .setDescription('إرسال بانل المتجر مع المنتجات'),
   new SlashCommandBuilder()
     .setName('تقييم')
-    .setDescription('إرسال نموذج تقييم للعميل'),
+    .setDescription('إرسال بانل تقييم مع أزرار تفاعلية'),  // تم تغيير الوصف
   new SlashCommandBuilder()
     .setName('اضافة_سؤال')
     .setDescription('إضافة سؤال جديد للأسئلة الشائعة')
@@ -313,7 +304,34 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (interaction.commandName === 'تقييم') {
-      await interaction.showModal(buildReviewModal());
+      // ** إرسال بانل التقييم مع الأزرار **
+      const embed = new EmbedBuilder()
+        .setColor(EMBED_COLOR)
+        .setTitle('⭐ تقييم التجربة')
+        .setDescription('اختر عدد النجوم التي تعكس تجربتك، ثم اكتب ملاحظاتك في النافذة المنبثقة.')
+        .setImage(cfg.review_image || 'https://example.com/review_default.png')
+        .setFooter({ text: 'تقييمك يهمنا ❤️' });
+
+      // إنشاء 5 أزرار للتقييم (1-5 نجوم)
+      const row = new ActionRowBuilder();
+      for (let i = 1; i <= 5; i++) {
+        const label = '⭐'.repeat(i);
+        row.addComponents(
+          new ButtonBuilder()
+            .setCustomId(`review_${i}`)
+            .setLabel(label)
+            .setStyle(ButtonStyle.Primary)
+        );
+      }
+      // إضافة زر إلغاء (اختياري) لإخفاء الرسالة
+      const cancelRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('review_cancel')
+          .setLabel('❌ إلغاء')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+      await interaction.reply({ embeds: [embed], components: [row, cancelRow], ephemeral: false });
       return;
     }
 
@@ -329,7 +347,7 @@ client.on('interactionCreate', async interaction => {
 
     if (interaction.commandName === 'تعيين_روم_التقييم') {
       const channel = interaction.options.getChannel('channel');
-      if (!channel || channel.type !== 0) { // 0 = GUILD_TEXT
+      if (!channel || channel.type !== 0) {
         await interaction.reply({ content: '❌ الرجاء تحديد روم نصي صالح.', ephemeral: true });
         return;
       }
@@ -364,7 +382,6 @@ client.on('interactionCreate', async interaction => {
         return;
       }
       const faq = cfg.faqs[idx];
-      // Embed يظهر الجواب فقط (مع السؤال كعنوان للإيضاح، أو يمكن جعل العنوان "الجواب")
       const embed = new EmbedBuilder()
         .setColor(EMBED_COLOR)
         .setTitle(faq.question)
@@ -391,7 +408,7 @@ client.on('interactionCreate', async interaction => {
     }
   }
 
-  // ---------- BUTTONS (Control) ----------
+  // ---------- BUTTONS ----------
   if (interaction.isButton()) {
     const guild = interaction.guild;
     if (!guild) {
@@ -399,6 +416,7 @@ client.on('interactionCreate', async interaction => {
       return;
     }
 
+    // أزرار التحكم (بوستات / نيترو)
     if (interaction.customId === 'ctrl_boost') {
       const count = guild.premiumSubscriptionCount || 0;
       const tier = guild.premiumTier;
@@ -434,6 +452,25 @@ client.on('interactionCreate', async interaction => {
           { name: 'مستوى الخادم', value: `Level ${tier}`, inline: true }
         );
       await interaction.reply({ embeds: [embed], ephemeral: true });
+      return;
+    }
+
+    // ** أزرار التقييم (review_1 إلى review_5) **
+    if (interaction.customId.startsWith('review_')) {
+      const rating = parseInt(interaction.customId.split('_')[1]);
+      if (isNaN(rating) || rating < 1 || rating > 5) {
+        await interaction.reply({ content: '❌ تقييم غير صالح.', ephemeral: true });
+        return;
+      }
+      // عرض المودال مع التقييم
+      await interaction.showModal(buildReviewModal(rating));
+      return;
+    }
+
+    // زر الإلغاء (يحذف الرسالة)
+    if (interaction.customId === 'review_cancel') {
+      await interaction.message.delete().catch(() => {});
+      await interaction.reply({ content: '✅ تم إلغاء التقييم.', ephemeral: true });
       return;
     }
   }
@@ -478,17 +515,17 @@ client.on('interactionCreate', async interaction => {
       return;
     }
 
-    if (interaction.customId === 'review_modal') {
-      const memberId = interaction.fields.getTextInputValue('review_member_id');
-      const product = interaction.fields.getTextInputValue('review_product');
-      const rating = interaction.fields.getTextInputValue('review_rating');
-      const message = interaction.fields.getTextInputValue('review_message');
-
-      if (!['1','2','3','4','5'].includes(rating)) {
-        await interaction.reply({ content: '❌ التقييم يجب أن يكون رقم من 1 إلى 5.', ephemeral: true });
+    // ** مودال التقييم الجديد **
+    if (interaction.customId.startsWith('review_modal|')) {
+      const rating = parseInt(interaction.customId.split('|')[1]);
+      if (isNaN(rating) || rating < 1 || rating > 5) {
+        await interaction.reply({ content: '❌ حدث خطأ في التقييم.', ephemeral: true });
         return;
       }
-      const stars = '⭐'.repeat(parseInt(rating));
+
+      const product = interaction.fields.getTextInputValue('review_product');
+      const message = interaction.fields.getTextInputValue('review_message');
+      const stars = '⭐'.repeat(rating);
 
       const channelId = cfg.review_channel_id;
       if (!channelId) {
@@ -501,25 +538,23 @@ client.on('interactionCreate', async interaction => {
         return;
       }
 
-      let member = null;
-      try {
-        member = await interaction.guild.members.fetch(memberId);
-      } catch (_) { /* ignore */ }
+      // الحصول على بيانات المستخدم
+      const member = interaction.member;
 
       const embed = new EmbedBuilder()
         .setColor(EMBED_COLOR)
         .setTitle('📝 تقييم جديد')
         .setThumbnail(cfg.review_image || 'https://example.com/default.png')
         .addFields(
-          { name: '👤 العميل', value: member ? `<@${member.id}>` : `ID: ${memberId}`, inline: true },
+          { name: '👤 العميل', value: `<@${member.id}>`, inline: true },
           { name: '🛒 المنتج', value: `\`${product}\``, inline: true },
           { name: '⭐ التقييم', value: stars, inline: true },
-          { name: '💬 رسالة للمتجر', value: message, inline: false }
+          { name: '💬 رسالة التقييم', value: message || 'لا يوجد تعليق', inline: false }
         )
         .setFooter({ text: 'شكراً لتقييمك' });
 
       await channel.send({ embeds: [embed] });
-      await interaction.reply({ content: '✅ تم إرسال تقييمك بنجاح.', ephemeral: true });
+      await interaction.reply({ content: '✅ تم إرسال تقييمك بنجاح. شكراً لك!', ephemeral: true });
       return;
     }
   }
