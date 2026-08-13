@@ -53,7 +53,7 @@ client.on('interactionCreate', async (interaction) => {
     .setCustomId('token')
     .setLabel('توكن حسابك الشخصي (Self-Bot)')
     .setStyle(TextInputStyle.Short)
-    .setPlaceholder('أدخل توكن حسابك')
+    .setPlaceholder('أدخل توكن حسابك الشخصي - يبدأ بـ NDU...')
     .setRequired(true);
 
   const sourceInput = new TextInputBuilder()
@@ -102,8 +102,8 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
   const sourceId = BigInt(sourceIdStr);
   const targetId = BigInt(targetIdStr);
 
-  // إنشاء عميل Self-Bot مع تمرير التوكن في المُنشئ
-  const copyClient = new SelfClient({ token: token });
+  // إنشاء عميل Self-Bot بدون تمرير توكن في المُنشئ
+  const copyClient = new SelfClient();
 
   let done = false;
 
@@ -120,7 +120,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
     }
 
     try {
-      // 1. نسخ الاسم والأيقونة
+      // نسخ الاسم والأيقونة
       await target.setName(source.name);
       if (source.iconURL()) {
         const iconData = await fetch(source.iconURL({ dynamic: true, format: 'png', size: 1024 }))
@@ -128,7 +128,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
         await target.setIcon(Buffer.from(iconData));
       }
 
-      // 2. نسخ الرتب
+      // نسخ الرتب
       const roleMap = new Map();
       for (const role of [...source.roles.cache.values()].reverse()) {
         if (role.id === source.roles.everyone.id) continue;
@@ -148,7 +148,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
         await sleep(500);
       }
 
-      // 3. نسخ الفئات
+      // نسخ الفئات
       const categoryMap = new Map();
       for (const channel of source.channels.cache.values()) {
         if (channel.type === 'GUILD_CATEGORY') {
@@ -165,7 +165,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
         }
       }
 
-      // 4. نسخ القنوات النصية والصوتية
+      // نسخ القنوات
       for (const channel of source.channels.cache.values()) {
         const parentId = channel.parentId ? categoryMap.get(channel.parentId) : null;
         const parent = parentId ? target.channels.cache.get(parentId) : null;
@@ -209,19 +209,23 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
     done = true;
   });
 
-  // تسجيل الدخول (لا نحتاج لتمرير التوكن مجدداً لأنه موجود في المُنشئ)
-  copyClient.login().catch(async (e) => {
-    await interaction.editReply({ content: `❌ فشل تسجيل الدخول بالتوكن الشخصي: ${e.message}` });
+  // تسجيل الدخول بالتوكن مباشرةً
+  copyClient.login(token).catch(async (e) => {
+    let errorMsg = `❌ فشل تسجيل الدخول بالتوكن الشخصي: ${e.message}`;
+    if (e.message.includes('invalid token')) {
+      errorMsg += '\n\n⚠️ **تأكد من:**\n• التوكن يخص حساب **شخصي** وليس بوت (يبدأ بـ NDU... أو MTA...).\n• التوكن صحيح ولم ينتهِ صلاحيته.\n• لا توجد مسافات قبل أو بعد التوكن.';
+    }
+    await interaction.editReply({ content: errorMsg });
     done = true;
   });
 
-  // مهلة 60 ثانية
+  // مهلة 90 ثانية
   setTimeout(() => {
     if (!done) {
       copyClient.destroy();
       interaction.editReply({ content: '⏰ انتهت المهلة، حاول مرة أخرى.' }).catch(() => {});
     }
-  }, 60000);
+  }, 90000);
 }
 
 function sleep(ms) {
