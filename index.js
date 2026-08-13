@@ -84,9 +84,15 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.customId !== 'copy_modal_submit') return;
 
   await interaction.deferReply({ ephemeral: true });
-  const userToken = interaction.fields.getTextInputValue('token');
-  const sourceId = interaction.fields.getTextInputValue('source');
-  const targetId = interaction.fields.getTextInputValue('target');
+
+  const userToken = interaction.fields.getTextInputValue('token').trim();
+  const sourceId = interaction.fields.getTextInputValue('source').trim();
+  const targetId = interaction.fields.getTextInputValue('target').trim();
+
+  if (!userToken) {
+    await interaction.editReply({ content: '❌ يجب إدخال توكن صالح.' });
+    return;
+  }
 
   await interaction.editReply({ content: '⏳ جارٍ البدء في النسخ... سأبلغك عند الانتهاء.' });
   await runCopy(userToken, sourceId, targetId, interaction);
@@ -95,13 +101,17 @@ client.on('interactionCreate', async (interaction) => {
 async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
   const sourceId = BigInt(sourceIdStr);
   const targetId = BigInt(targetIdStr);
-  const copyClient = new SelfClient();
+
+  // إنشاء عميل Self-Bot مع تمرير التوكن في المُنشئ
+  const copyClient = new SelfClient({ token: token });
+
   let done = false;
 
   copyClient.on('ready', async () => {
     console.log(`[+] جلسة النسخ دخلت كـ ${copyClient.user.tag}`);
     const source = copyClient.guilds.cache.get(sourceId.toString());
     const target = copyClient.guilds.cache.get(targetId.toString());
+
     if (!source || !target) {
       await interaction.editReply({ content: '❌ تأكد من الآيديات وصحة التوكن.' });
       copyClient.destroy();
@@ -110,6 +120,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
     }
 
     try {
+      // 1. نسخ الاسم والأيقونة
       await target.setName(source.name);
       if (source.iconURL()) {
         const iconData = await fetch(source.iconURL({ dynamic: true, format: 'png', size: 1024 }))
@@ -117,6 +128,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
         await target.setIcon(Buffer.from(iconData));
       }
 
+      // 2. نسخ الرتب
       const roleMap = new Map();
       for (const role of [...source.roles.cache.values()].reverse()) {
         if (role.id === source.roles.everyone.id) continue;
@@ -136,6 +148,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
         await sleep(500);
       }
 
+      // 3. نسخ الفئات
       const categoryMap = new Map();
       for (const channel of source.channels.cache.values()) {
         if (channel.type === 'GUILD_CATEGORY') {
@@ -152,6 +165,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
         }
       }
 
+      // 4. نسخ القنوات النصية والصوتية
       for (const channel of source.channels.cache.values()) {
         const parentId = channel.parentId ? categoryMap.get(channel.parentId) : null;
         const parent = parentId ? target.channels.cache.get(parentId) : null;
@@ -188,18 +202,20 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
 
       await interaction.editReply({ content: '✅ **تم النسخ بنجاح!** (تم تخطي الموجود مسبقاً)' });
     } catch (err) {
-      await interaction.editReply({ content: `❌ حدث خطأ: ${err.message}` });
+      await interaction.editReply({ content: `❌ حدث خطأ أثناء النسخ: ${err.message}` });
     }
 
     copyClient.destroy();
     done = true;
   });
 
-  copyClient.login(token).catch(async (e) => {
+  // تسجيل الدخول (لا نحتاج لتمرير التوكن مجدداً لأنه موجود في المُنشئ)
+  copyClient.login().catch(async (e) => {
     await interaction.editReply({ content: `❌ فشل تسجيل الدخول بالتوكن الشخصي: ${e.message}` });
     done = true;
   });
 
+  // مهلة 60 ثانية
   setTimeout(() => {
     if (!done) {
       copyClient.destroy();
