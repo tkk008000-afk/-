@@ -35,7 +35,7 @@ client.on('interactionCreate', async (interaction) => {
     const modal = new ModalBuilder().setCustomId('copy_modal_submit').setTitle('بيانات النسخ');
     modal.addComponents(
       new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('token').setLabel('توكن حسابك الشخصي (Self-Bot)').setStyle(TextInputStyle.Short).setPlaceholder('يبدأ بـ NDU...').setRequired(true)
+        new TextInputBuilder().setCustomId('token').setLabel('توكن حسابك الشخصي (Self-Bot)').setStyle(TextInputStyle.Short).setPlaceholder('يبدأ بـ NDU... أو MTA...').setRequired(true)
       ),
       new ActionRowBuilder().addComponents(
         new TextInputBuilder().setCustomId('source').setLabel('آيدي السيرفر المصدر').setStyle(TextInputStyle.Short).setPlaceholder('123456789012345678').setRequired(true)
@@ -58,6 +58,18 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
+    // تحقق أولي من صيغة التوكن (يجب أن يبدأ بـ NDU أو MTA)
+    if (!token.startsWith('NDU') && !token.startsWith('MTA')) {
+      await interaction.editReply({
+        content: '❌ **التوكن غير صالح لتسجيل الدخول بحساب شخصي.**\n\n' +
+                 'تأكد من:\n' +
+                 '• التوكن يبدأ بـ `NDU...` أو `MTA...` (علامة أنه توكن مستخدم وليس بوت).\n' +
+                 '• تم نسخه بالكامل (بدون مسافات أو أحرف إضافية).\n' +
+                 '• هذا التوكن خاص بحسابك الشخصي وليس بتطبيق بوت.'
+      });
+      return;
+    }
+
     const progressEmbed = new EmbedBuilder()
       .setTitle('⏳ جاري نسخ السيرفر...')
       .setColor('#f1c40f')
@@ -73,7 +85,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction, embed) {
   const sourceId = BigInt(sourceIdStr);
   const targetId = BigInt(targetIdStr);
 
-  // === التصحيح: تمرير التوكن في المُنشئ ===
+  // إنشاء العميل مع التوكن في المُنشئ (لضمان توفر التوكن لجميع الطلبات)
   const copyClient = new SelfClient({ token: token });
 
   let done = false;
@@ -91,7 +103,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction, embed) {
     }
 
     try {
-      // 1. حذف الرتب القديمة (ما عدا @everyone)
+      // 1. حذف الرتب القديمة
       await updateProgress(interaction, embed, '🗑️ حذف الرتب القديمة...', 10);
       const everyone = target.roles.everyone;
       for (const role of target.roles.cache.filter(r => r.id !== everyone.id).values()) {
@@ -131,7 +143,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction, embed) {
         await sleep(300);
       }
 
-      // 5. نسخ الإيموجيات (باستخدام العميل الذي يملك التوكن)
+      // 5. نسخ الإيموجيات
       await updateProgress(interaction, embed, '😀 نسخ الإيموجيات...', 60);
       for (const emoji of source.emojis.cache.values()) {
         try {
@@ -174,7 +186,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction, embed) {
         }
       }
 
-      // 8. نسخ القنوات (نصوص وصوت) مع الصلاحيات
+      // 8. نسخ القنوات
       await updateProgress(interaction, embed, '📝 نسخ القنوات النصية والصوتية...', 90);
       for (const channel of source.channels.cache.values()) {
         const parentId = channel.parentId ? categoryMap.get(channel.parentId) : null;
@@ -226,7 +238,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction, embed) {
         }
       }
 
-      // 9. نسخ اسم وأيقونة السيرفر
+      // 9. نسخ اسم وأيقونة
       await updateProgress(interaction, embed, '🖼️ نسخ اسم وأيقونة السيرفر...', 95);
       await target.setName(source.name);
       if (source.iconURL()) {
@@ -235,7 +247,6 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction, embed) {
         await target.setIcon(Buffer.from(iconData));
       }
 
-      // 10. اكتمال
       await updateProgress(interaction, embed, '✅ **اكتمل النسخ بنجاح!** (تم حذف القديم ونسخ الجديد مع الصلاحيات)', 100);
       await interaction.editReply({ embeds: [embed] });
 
@@ -247,17 +258,16 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction, embed) {
     done = true;
   });
 
-  // === تسجيل الدخول بدون وسيط لأن التوكن في المُنشئ ===
-  copyClient.login().catch(async (e) => {
+  // محاولة تسجيل الدخول باستخدام login(token) (كإجراء إضافي للتوافق)
+  copyClient.login(token).catch(async (e) => {
     let errorMsg = `❌ فشل تسجيل الدخول بالتوكن الشخصي: ${e.message}`;
     if (e.message.includes('invalid token')) {
-      errorMsg += '\n\n⚠️ **تأكد من:**\n• التوكن يخص حساب **شخصي** وليس بوت.\n• التوكن صحيح ولم ينتهِ صلاحيته.';
+      errorMsg += '\n\n⚠️ **تأكد من:**\n• التوكن يخص حساب **شخصي** وليس بوت (يبدأ بـ NDU... أو MTA...).\n• التوكن صحيح ولم ينتهِ صلاحيته.\n• تم نسخه بدون مسافات أو أحرف إضافية.';
     }
     await interaction.editReply({ content: errorMsg });
     done = true;
   });
 
-  // مهلة 120 ثانية
   setTimeout(() => {
     if (!done) {
       copyClient.destroy();
