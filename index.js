@@ -8,11 +8,7 @@ if (!BOT_TOKEN) {
 }
 
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
 client.on('ready', () => {
@@ -28,81 +24,59 @@ client.on('messageCreate', async (message) => {
       .setDescription('اضغط الزر أدناه لبدء عملية النسخ.\nسيُطلب منك إدخال توكن حسابك الشخصي، آيدي المصدر، وآيدي الهدف.')
       .setColor('#2b2d31')
       .setFooter({ text: 'البوت لا يخزن بياناتك' });
-
     const row = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId('open_copy_modal')
-          .setLabel('📋 نسخ السيرفر')
-          .setStyle(ButtonStyle.Primary)
-      );
-
+      .addComponents(new ButtonBuilder().setCustomId('open_copy_modal').setLabel('📋 نسخ السيرفر').setStyle(ButtonStyle.Primary));
     await message.channel.send({ embeds: [embed], components: [row] });
   }
 });
 
+// معالج الأزرار والمودال (نفس السابق)
 client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isButton()) return;
-  if (interaction.customId !== 'open_copy_modal') return;
-
-  const modal = new ModalBuilder()
-    .setCustomId('copy_modal_submit')
-    .setTitle('بيانات النسخ');
-
-  const tokenInput = new TextInputBuilder()
-    .setCustomId('token')
-    .setLabel('توكن حسابك الشخصي (Self-Bot)')
-    .setStyle(TextInputStyle.Short)
-    .setPlaceholder('أدخل توكن حسابك الشخصي - يبدأ بـ NDU...')
-    .setRequired(true);
-
-  const sourceInput = new TextInputBuilder()
-    .setCustomId('source')
-    .setLabel('آيدي السيرفر المصدر')
-    .setStyle(TextInputStyle.Short)
-    .setPlaceholder('123456789012345678')
-    .setRequired(true);
-
-  const targetInput = new TextInputBuilder()
-    .setCustomId('target')
-    .setLabel('آيدي السيرفر الهدف')
-    .setStyle(TextInputStyle.Short)
-    .setPlaceholder('876543210987654321')
-    .setRequired(true);
-
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(tokenInput),
-    new ActionRowBuilder().addComponents(sourceInput),
-    new ActionRowBuilder().addComponents(targetInput)
-  );
-
-  await interaction.showModal(modal);
-});
-
-client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isModalSubmit()) return;
-  if (interaction.customId !== 'copy_modal_submit') return;
-
-  await interaction.deferReply({ ephemeral: true });
-
-  const userToken = interaction.fields.getTextInputValue('token').trim();
-  const sourceId = interaction.fields.getTextInputValue('source').trim();
-  const targetId = interaction.fields.getTextInputValue('target').trim();
-
-  if (!userToken) {
-    await interaction.editReply({ content: '❌ يجب إدخال توكن صالح.' });
-    return;
+  if (interaction.isButton() && interaction.customId === 'open_copy_modal') {
+    const modal = new ModalBuilder().setCustomId('copy_modal_submit').setTitle('بيانات النسخ');
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('token').setLabel('توكن حسابك الشخصي (Self-Bot)').setStyle(TextInputStyle.Short).setPlaceholder('يبدأ بـ NDU...').setRequired(true)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('source').setLabel('آيدي السيرفر المصدر').setStyle(TextInputStyle.Short).setPlaceholder('123456789012345678').setRequired(true)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('target').setLabel('آيدي السيرفر الهدف').setStyle(TextInputStyle.Short).setPlaceholder('876543210987654321').setRequired(true)
+      )
+    );
+    await interaction.showModal(modal);
   }
 
-  await interaction.editReply({ content: '⏳ جارٍ البدء في النسخ... سأبلغك عند الانتهاء.' });
-  await runCopy(userToken, sourceId, targetId, interaction);
+  if (interaction.isModalSubmit() && interaction.customId === 'copy_modal_submit') {
+    await interaction.deferReply({ ephemeral: true });
+    const token = interaction.fields.getTextInputValue('token').trim();
+    const sourceId = interaction.fields.getTextInputValue('source').trim();
+    const targetId = interaction.fields.getTextInputValue('target').trim();
+
+    if (!token) {
+      await interaction.editReply({ content: '❌ يجب إدخال توكن صالح.' });
+      return;
+    }
+
+    // إنشاء إمبد التقدم الأولي
+    const progressEmbed = new EmbedBuilder()
+      .setTitle('⏳ جاري نسخ السيرفر...')
+      .setColor('#f1c40f')
+      .setDescription('**الخطوات:**\n⬜⬜⬜⬜⬜ بدء العملية...')
+      .addFields({ name: '📌 الحالة', value: 'جارٍ التحضير...', inline: false });
+
+    await interaction.editReply({ embeds: [progressEmbed] });
+
+    // تشغيل النسخ مع تحديث الإمبد
+    await runCopy(token, sourceId, targetId, interaction, progressEmbed);
+  }
 });
 
-async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
+// دالة النسخ مع التقدم
+async function runCopy(token, sourceIdStr, targetIdStr, interaction, embed) {
   const sourceId = BigInt(sourceIdStr);
   const targetId = BigInt(targetIdStr);
-
-  // إنشاء عميل Self-Bot بدون تمرير توكن في المُنشئ
   const copyClient = new SelfClient();
 
   let done = false;
@@ -120,52 +94,97 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
     }
 
     try {
-      // نسخ الاسم والأيقونة
-      await target.setName(source.name);
-      if (source.iconURL()) {
-        const iconData = await fetch(source.iconURL({ dynamic: true, format: 'png', size: 1024 }))
-          .then(res => res.arrayBuffer());
-        await target.setIcon(Buffer.from(iconData));
+      // === 1. حذف الرتب القديمة في الهدف (ما عدا @everyone) ===
+      await updateProgress(interaction, embed, '🗑️ حذف الرتب القديمة...', 10);
+      const everyoneRole = target.roles.everyone;
+      const rolesToDelete = target.roles.cache.filter(r => r.id !== everyoneRole.id);
+      for (const role of rolesToDelete.values()) {
+        try { await role.delete(); } catch (e) { /* تجاهل الأخطاء */ }
+        await sleep(200);
       }
 
-      // نسخ الرتب
+      // === 2. حذف الإيموجيات القديمة ===
+      await updateProgress(interaction, embed, '🗑️ حذف الإيموجيات القديمة...', 20);
+      for (const emoji of target.emojis.cache.values()) {
+        try { await emoji.delete(); } catch (e) {}
+        await sleep(200);
+      }
+
+      // === 3. حذف الملصقات القديمة ===
+      await updateProgress(interaction, embed, '🗑️ حذف الملصقات القديمة...', 30);
+      for (const sticker of target.stickers.cache.values()) {
+        try { await sticker.delete(); } catch (e) {}
+        await sleep(200);
+      }
+
+      // === 4. نسخ الرتب الجديدة ===
+      await updateProgress(interaction, embed, '📋 نسخ الرتب...', 40);
       const roleMap = new Map();
       for (const role of [...source.roles.cache.values()].reverse()) {
         if (role.id === source.roles.everyone.id) continue;
-        const existing = target.roles.cache.find(r => r.name === role.name);
-        if (existing) {
-          roleMap.set(role.id, existing.id);
-          continue;
+        try {
+          const newRole = await target.roles.create({
+            name: role.name,
+            permissions: role.permissions,
+            color: role.color,
+            hoist: role.hoist,
+            mentionable: role.mentionable
+          });
+          roleMap.set(role.id, newRole.id);
+        } catch (e) {
+          console.log(`فشل نسخ رتبة ${role.name}: ${e.message}`);
         }
-        const newRole = await target.roles.create({
-          name: role.name,
-          permissions: role.permissions,
-          color: role.color,
-          hoist: role.hoist,
-          mentionable: role.mentionable
-        });
-        roleMap.set(role.id, newRole.id);
-        await sleep(500);
+        await sleep(300);
       }
 
-      // نسخ الفئات
+      // === 5. نسخ الإيموجيات ===
+      await updateProgress(interaction, embed, '😀 نسخ الإيموجيات...', 60);
+      for (const emoji of source.emojis.cache.values()) {
+        try {
+          const ext = emoji.animated ? 'gif' : 'png';
+          const url = `https://cdn.discordapp.com/emojis/${emoji.id}.${ext}?size=128`;
+          const buffer = await fetch(url).then(r => r.arrayBuffer());
+          await target.emojis.create({ attachment: Buffer.from(buffer), name: emoji.name });
+        } catch (e) { console.log(`فشل نسخ إيموجي ${emoji.name}: ${e.message}`); }
+        await sleep(300);
+      }
+
+      // === 6. نسخ الملصقات ===
+      await updateProgress(interaction, embed, '📎 نسخ الملصقات...', 70);
+      for (const sticker of source.stickers.cache.values()) {
+        try {
+          const url = sticker.url;
+          const buffer = await fetch(url).then(r => r.arrayBuffer());
+          await target.stickers.create({
+            name: sticker.name,
+            description: sticker.description || '',
+            tags: sticker.tags || '',
+            file: Buffer.from(buffer)
+          });
+        } catch (e) { console.log(`فشل نسخ ملصق ${sticker.name}: ${e.message}`); }
+        await sleep(300);
+      }
+
+      // === 7. نسخ الفئات والقنوات (بدون حذف القنوات الموجودة) ===
+      await updateProgress(interaction, embed, '📁 نسخ الفئات...', 80);
       const categoryMap = new Map();
       for (const channel of source.channels.cache.values()) {
         if (channel.type === 'GUILD_CATEGORY') {
-          const existingCat = target.channels.cache.find(
-            c => c.type === 'GUILD_CATEGORY' && c.name === channel.name
-          );
-          if (existingCat) {
-            categoryMap.set(channel.id, existingCat.id);
+          const existing = target.channels.cache.find(c => c.type === 'GUILD_CATEGORY' && c.name === channel.name);
+          if (existing) {
+            categoryMap.set(channel.id, existing.id);
             continue;
           }
-          const newCat = await target.channels.create(channel.name, { type: 'GUILD_CATEGORY' });
+          const newCat = await target.channels.create({
+            name: channel.name,
+            type: 'GUILD_CATEGORY'
+          });
           categoryMap.set(channel.id, newCat.id);
-          await sleep(500);
+          await sleep(300);
         }
       }
 
-      // نسخ القنوات
+      await updateProgress(interaction, embed, '📝 نسخ القنوات النصية والصوتية...', 90);
       for (const channel of source.channels.cache.values()) {
         const parentId = channel.parentId ? categoryMap.get(channel.parentId) : null;
         const parent = parentId ? target.channels.cache.get(parentId) : null;
@@ -175,14 +194,25 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
             c => c.type === 'GUILD_TEXT' && c.name === channel.name && c.parentId === (parent ? parent.id : null)
           );
           if (existing) continue;
-          const newCh = await target.channels.create(channel.name, {
+          const newCh = await target.channels.create({
+            name: channel.name,
             type: 'GUILD_TEXT',
             parent: parent,
             topic: channel.topic,
             rateLimitPerUser: channel.rateLimitPerUser,
             nsfw: channel.nsfw
           });
-          await sleep(500);
+          // تطبيق الصلاحيات باستخدام الرتب الجديدة
+          for (const [overwriteId, overwrite] of channel.permissionOverwrites.cache) {
+            const newRoleId = roleMap.get(overwriteId);
+            if (newRoleId) {
+              const targetRole = target.roles.cache.get(newRoleId);
+              if (targetRole) {
+                await newCh.permissionOverwrites.create(targetRole, overwrite);
+              }
+            }
+          }
+          await sleep(300);
         }
 
         if (channel.type === 'GUILD_VOICE') {
@@ -190,42 +220,73 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction) {
             c => c.type === 'GUILD_VOICE' && c.name === channel.name && c.parentId === (parent ? parent.id : null)
           );
           if (existing) continue;
-          const newVc = await target.channels.create(channel.name, {
+          const newVc = await target.channels.create({
+            name: channel.name,
             type: 'GUILD_VOICE',
             parent: parent,
             bitrate: channel.bitrate,
             userLimit: channel.userLimit
           });
-          await sleep(500);
+          for (const [overwriteId, overwrite] of channel.permissionOverwrites.cache) {
+            const newRoleId = roleMap.get(overwriteId);
+            if (newRoleId) {
+              const targetRole = target.roles.cache.get(newRoleId);
+              if (targetRole) {
+                await newVc.permissionOverwrites.create(targetRole, overwrite);
+              }
+            }
+          }
+          await sleep(300);
         }
       }
 
-      await interaction.editReply({ content: '✅ **تم النسخ بنجاح!** (تم تخطي الموجود مسبقاً)' });
+      // === 8. نسخ اسم السيرفر والأيقونة ===
+      await updateProgress(interaction, embed, '🖼️ نسخ اسم وأيقونة السيرفر...', 95);
+      await target.setName(source.name);
+      if (source.iconURL()) {
+        const iconData = await fetch(source.iconURL({ dynamic: true, format: 'png', size: 1024 }))
+          .then(res => res.arrayBuffer());
+        await target.setIcon(Buffer.from(iconData));
+      }
+
+      // === 9. انتهاء ===
+      await updateProgress(interaction, embed, '✅ **اكتمل النسخ بنجاح!**', 100);
+      await interaction.editReply({ embeds: [embed] });
+
     } catch (err) {
-      await interaction.editReply({ content: `❌ حدث خطأ أثناء النسخ: ${err.message}` });
+      await updateProgress(interaction, embed, `❌ حدث خطأ: ${err.message}`, 100);
     }
 
     copyClient.destroy();
     done = true;
   });
 
-  // تسجيل الدخول بالتوكن مباشرةً
   copyClient.login(token).catch(async (e) => {
     let errorMsg = `❌ فشل تسجيل الدخول بالتوكن الشخصي: ${e.message}`;
     if (e.message.includes('invalid token')) {
-      errorMsg += '\n\n⚠️ **تأكد من:**\n• التوكن يخص حساب **شخصي** وليس بوت (يبدأ بـ NDU... أو MTA...).\n• التوكن صحيح ولم ينتهِ صلاحيته.\n• لا توجد مسافات قبل أو بعد التوكن.';
+      errorMsg += '\n\n⚠️ **تأكد من:**\n• التوكن يخص حساب **شخصي** وليس بوت (يبدأ بـ NDU...).\n• التوكن صحيح ولم ينتهِ صلاحيته.';
     }
     await interaction.editReply({ content: errorMsg });
     done = true;
   });
 
-  // مهلة 90 ثانية
+  // مهلة 120 ثانية
   setTimeout(() => {
     if (!done) {
       copyClient.destroy();
       interaction.editReply({ content: '⏰ انتهت المهلة، حاول مرة أخرى.' }).catch(() => {});
     }
-  }, 90000);
+  }, 120000);
+}
+
+// دالة تحديث الإمبد مع شريط تقدم
+async function updateProgress(interaction, embed, status, percent) {
+  const filled = Math.floor(percent / 10);
+  const empty = 10 - filled;
+  const bar = '█'.repeat(filled) + '░'.repeat(empty);
+  embed.setDescription(`**التقدم:** ${bar} ${percent}%\n\n**الحالة:** ${status}`);
+  embed.setColor(percent >= 100 ? '#2ecc71' : '#f1c40f');
+  await interaction.editReply({ embeds: [embed] });
 }
 
 function sleep(ms) {
