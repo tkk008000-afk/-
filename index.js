@@ -30,7 +30,6 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-// معالج الأزرار والمودال (نفس السابق)
 client.on('interactionCreate', async (interaction) => {
   if (interaction.isButton() && interaction.customId === 'open_copy_modal') {
     const modal = new ModalBuilder().setCustomId('copy_modal_submit').setTitle('بيانات النسخ');
@@ -59,25 +58,23 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // إنشاء إمبد التقدم الأولي
     const progressEmbed = new EmbedBuilder()
       .setTitle('⏳ جاري نسخ السيرفر...')
       .setColor('#f1c40f')
-      .setDescription('**الخطوات:**\n⬜⬜⬜⬜⬜ بدء العملية...')
-      .addFields({ name: '📌 الحالة', value: 'جارٍ التحضير...', inline: false });
+      .setDescription('**التقدم:** ░░░░░░░░░░ 0%\n\n**الحالة:** جارٍ التحضير...')
+      .addFields({ name: '📌 التفاصيل', value: 'سيتم حذف الرتب والإيموجيات والملصقات في الهدف أولاً.', inline: false });
 
     await interaction.editReply({ embeds: [progressEmbed] });
-
-    // تشغيل النسخ مع تحديث الإمبد
     await runCopy(token, sourceId, targetId, interaction, progressEmbed);
   }
 });
 
-// دالة النسخ مع التقدم
 async function runCopy(token, sourceIdStr, targetIdStr, interaction, embed) {
   const sourceId = BigInt(sourceIdStr);
   const targetId = BigInt(targetIdStr);
-  const copyClient = new SelfClient();
+
+  // === التصحيح: تمرير التوكن في المُنشئ ===
+  const copyClient = new SelfClient({ token: token });
 
   let done = false;
 
@@ -94,31 +91,30 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction, embed) {
     }
 
     try {
-      // === 1. حذف الرتب القديمة في الهدف (ما عدا @everyone) ===
+      // 1. حذف الرتب القديمة (ما عدا @everyone)
       await updateProgress(interaction, embed, '🗑️ حذف الرتب القديمة...', 10);
-      const everyoneRole = target.roles.everyone;
-      const rolesToDelete = target.roles.cache.filter(r => r.id !== everyoneRole.id);
-      for (const role of rolesToDelete.values()) {
-        try { await role.delete(); } catch (e) { /* تجاهل الأخطاء */ }
+      const everyone = target.roles.everyone;
+      for (const role of target.roles.cache.filter(r => r.id !== everyone.id).values()) {
+        try { await role.delete(); } catch (e) {}
         await sleep(200);
       }
 
-      // === 2. حذف الإيموجيات القديمة ===
+      // 2. حذف الإيموجيات
       await updateProgress(interaction, embed, '🗑️ حذف الإيموجيات القديمة...', 20);
       for (const emoji of target.emojis.cache.values()) {
         try { await emoji.delete(); } catch (e) {}
         await sleep(200);
       }
 
-      // === 3. حذف الملصقات القديمة ===
+      // 3. حذف الملصقات
       await updateProgress(interaction, embed, '🗑️ حذف الملصقات القديمة...', 30);
       for (const sticker of target.stickers.cache.values()) {
         try { await sticker.delete(); } catch (e) {}
         await sleep(200);
       }
 
-      // === 4. نسخ الرتب الجديدة ===
-      await updateProgress(interaction, embed, '📋 نسخ الرتب...', 40);
+      // 4. نسخ الرتب الجديدة
+      await updateProgress(interaction, embed, '📋 نسخ الرتب الجديدة...', 40);
       const roleMap = new Map();
       for (const role of [...source.roles.cache.values()].reverse()) {
         if (role.id === source.roles.everyone.id) continue;
@@ -131,13 +127,11 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction, embed) {
             mentionable: role.mentionable
           });
           roleMap.set(role.id, newRole.id);
-        } catch (e) {
-          console.log(`فشل نسخ رتبة ${role.name}: ${e.message}`);
-        }
+        } catch (e) { console.log(`فشل نسخ رتبة ${role.name}: ${e.message}`); }
         await sleep(300);
       }
 
-      // === 5. نسخ الإيموجيات ===
+      // 5. نسخ الإيموجيات (باستخدام العميل الذي يملك التوكن)
       await updateProgress(interaction, embed, '😀 نسخ الإيموجيات...', 60);
       for (const emoji of source.emojis.cache.values()) {
         try {
@@ -149,12 +143,11 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction, embed) {
         await sleep(300);
       }
 
-      // === 6. نسخ الملصقات ===
+      // 6. نسخ الملصقات
       await updateProgress(interaction, embed, '📎 نسخ الملصقات...', 70);
       for (const sticker of source.stickers.cache.values()) {
         try {
-          const url = sticker.url;
-          const buffer = await fetch(url).then(r => r.arrayBuffer());
+          const buffer = await fetch(sticker.url).then(r => r.arrayBuffer());
           await target.stickers.create({
             name: sticker.name,
             description: sticker.description || '',
@@ -165,7 +158,7 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction, embed) {
         await sleep(300);
       }
 
-      // === 7. نسخ الفئات والقنوات (بدون حذف القنوات الموجودة) ===
+      // 7. نسخ الفئات
       await updateProgress(interaction, embed, '📁 نسخ الفئات...', 80);
       const categoryMap = new Map();
       for (const channel of source.channels.cache.values()) {
@@ -175,15 +168,13 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction, embed) {
             categoryMap.set(channel.id, existing.id);
             continue;
           }
-          const newCat = await target.channels.create({
-            name: channel.name,
-            type: 'GUILD_CATEGORY'
-          });
+          const newCat = await target.channels.create({ name: channel.name, type: 'GUILD_CATEGORY' });
           categoryMap.set(channel.id, newCat.id);
           await sleep(300);
         }
       }
 
+      // 8. نسخ القنوات (نصوص وصوت) مع الصلاحيات
       await updateProgress(interaction, embed, '📝 نسخ القنوات النصية والصوتية...', 90);
       for (const channel of source.channels.cache.values()) {
         const parentId = channel.parentId ? categoryMap.get(channel.parentId) : null;
@@ -202,14 +193,11 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction, embed) {
             rateLimitPerUser: channel.rateLimitPerUser,
             nsfw: channel.nsfw
           });
-          // تطبيق الصلاحيات باستخدام الرتب الجديدة
           for (const [overwriteId, overwrite] of channel.permissionOverwrites.cache) {
             const newRoleId = roleMap.get(overwriteId);
             if (newRoleId) {
               const targetRole = target.roles.cache.get(newRoleId);
-              if (targetRole) {
-                await newCh.permissionOverwrites.create(targetRole, overwrite);
-              }
+              if (targetRole) await newCh.permissionOverwrites.create(targetRole, overwrite);
             }
           }
           await sleep(300);
@@ -231,16 +219,14 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction, embed) {
             const newRoleId = roleMap.get(overwriteId);
             if (newRoleId) {
               const targetRole = target.roles.cache.get(newRoleId);
-              if (targetRole) {
-                await newVc.permissionOverwrites.create(targetRole, overwrite);
-              }
+              if (targetRole) await newVc.permissionOverwrites.create(targetRole, overwrite);
             }
           }
           await sleep(300);
         }
       }
 
-      // === 8. نسخ اسم السيرفر والأيقونة ===
+      // 9. نسخ اسم وأيقونة السيرفر
       await updateProgress(interaction, embed, '🖼️ نسخ اسم وأيقونة السيرفر...', 95);
       await target.setName(source.name);
       if (source.iconURL()) {
@@ -249,8 +235,8 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction, embed) {
         await target.setIcon(Buffer.from(iconData));
       }
 
-      // === 9. انتهاء ===
-      await updateProgress(interaction, embed, '✅ **اكتمل النسخ بنجاح!**', 100);
+      // 10. اكتمال
+      await updateProgress(interaction, embed, '✅ **اكتمل النسخ بنجاح!** (تم حذف القديم ونسخ الجديد مع الصلاحيات)', 100);
       await interaction.editReply({ embeds: [embed] });
 
     } catch (err) {
@@ -261,10 +247,11 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction, embed) {
     done = true;
   });
 
-  copyClient.login(token).catch(async (e) => {
+  // === تسجيل الدخول بدون وسيط لأن التوكن في المُنشئ ===
+  copyClient.login().catch(async (e) => {
     let errorMsg = `❌ فشل تسجيل الدخول بالتوكن الشخصي: ${e.message}`;
     if (e.message.includes('invalid token')) {
-      errorMsg += '\n\n⚠️ **تأكد من:**\n• التوكن يخص حساب **شخصي** وليس بوت (يبدأ بـ NDU...).\n• التوكن صحيح ولم ينتهِ صلاحيته.';
+      errorMsg += '\n\n⚠️ **تأكد من:**\n• التوكن يخص حساب **شخصي** وليس بوت.\n• التوكن صحيح ولم ينتهِ صلاحيته.';
     }
     await interaction.editReply({ content: errorMsg });
     done = true;
@@ -279,13 +266,13 @@ async function runCopy(token, sourceIdStr, targetIdStr, interaction, embed) {
   }, 120000);
 }
 
-// دالة تحديث الإمبد مع شريط تقدم
 async function updateProgress(interaction, embed, status, percent) {
   const filled = Math.floor(percent / 10);
   const empty = 10 - filled;
   const bar = '█'.repeat(filled) + '░'.repeat(empty);
   embed.setDescription(`**التقدم:** ${bar} ${percent}%\n\n**الحالة:** ${status}`);
   embed.setColor(percent >= 100 ? '#2ecc71' : '#f1c40f');
+  embed.spliceFields(0, 1, { name: '📌 التفاصيل', value: status, inline: false });
   await interaction.editReply({ embeds: [embed] });
 }
 
